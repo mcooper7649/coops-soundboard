@@ -375,7 +375,6 @@ class SoundboardApp {
       
       if (audioProcess) {
         this.currentPlayback = { audioProcess, method: 'system-audio-pulseaudio' };
-        this.setupSystemAudioCompletionDetection(clipId, duration, audioProcess);
         console.log('System audio playback started successfully');
         return;
       }
@@ -387,7 +386,6 @@ class SoundboardApp {
     
     if (audioProcess) {
       this.currentPlayback = { audioProcess, method: 'system-audio-pulseaudio' };
-      this.setupSystemAudioCompletionDetection(clipId, duration, audioProcess);
       console.log('System audio playback started successfully');
     } else {
       console.error('System audio playback failed, falling back to standard methods');
@@ -454,35 +452,8 @@ class SoundboardApp {
     }
   }
 
-  private setupSystemAudioCompletionDetection(clipId: string, duration: number, audioProcess: any): void {
-    console.log(`Setting up completion detection for system audio clip ${clipId} with duration ${duration}s`);
-    
-    // REMOVED: Timeout-based completion detection - let the audio process finish naturally
-    // This is how other users of this library typically handle it - no artificial cutoffs
-    
-    // Set up progress monitoring (for UI updates only, not for completion detection)
-    const startTime = Date.now();
-    const progressInterval = setInterval(() => {
-      if (this.playbackState.isPlaying && this.playbackState.currentClipId === clipId) {
-        // Calculate progress based on duration, but cap at 95% to avoid premature completion
-        const elapsed = (Date.now() - startTime) / 1000;
-        const progress = Math.min(elapsed / duration, 0.95); // Cap at 95% to prevent early cutoff
-        
-        this.playbackState.progress = progress;
-        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
-        
-        // Don't use progress for completion detection - let the process exit handle it
-      } else {
-        clearInterval(progressInterval);
-      }
-    }, 100);
-
-    // Store the interval for cleanup
-    if (!this.currentPlayback) this.currentPlayback = {};
-    this.currentPlayback.progressInterval = progressInterval;
-    
-    console.log(`Progress monitoring set up for clip ${clipId} - letting audio process finish naturally`);
-  }
+  // REMOVED: setupSystemAudioCompletionDetection method - no more artificial completion detection
+  // Audio completion is now handled entirely by the process exit event
 
   private tryPlaybackMethods(filePath: string, clipId: string, isSystemAudio: boolean = false): void {
     const settings = this.getSettings();
@@ -761,11 +732,7 @@ class SoundboardApp {
         
         // For system audio clips, set up completion detection
         if (isSystemAudio) {
-          const clips = this.getClips();
-          const clip = clips.find(c => c.id === clipId);
-          if (clip) {
-            this.setupSystemAudioCompletionDetection(clipId, clip.duration, audioProcess);
-          }
+          // System audio completion detection handled by process exit event
         }
       } else if (virtualDeviceId === 'vb-cable') {
         // VB-Cable virtual device (Windows-style, but we'll try on Linux)
@@ -911,11 +878,7 @@ class SoundboardApp {
           console.log('Cleared progress interval');
         }
         
-        // Clear completion timeout if it exists (legacy cleanup)
-        if (this.currentPlayback.completionTimeout) {
-          clearTimeout(this.currentPlayback.completionTimeout);
-          console.log('Cleared completion timeout');
-        }
+        // Legacy completion timeout cleanup removed - no more artificial timeouts
         
         if (this.currentPlayback.audioProcess) {
           // Kill the audio process if it's still running
