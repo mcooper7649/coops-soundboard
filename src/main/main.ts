@@ -1284,6 +1284,25 @@ class SoundboardApp {
     }
 
     console.log('Stopping system audio capture...');
+    
+    // Add a small buffer delay to ensure clean recording completion
+    // This prevents the timing mismatch between button release and actual audio stop
+    const bufferDelay = 300; // 300ms buffer for clean recording completion
+    
+    // Don't stop immediately - add buffer delay
+    setTimeout(() => {
+      this.finalizeSystemAudioCapture();
+    }, bufferDelay);
+    
+    // Return null immediately - the actual stop happens after the buffer delay
+    return null;
+  }
+
+  private finalizeSystemAudioCapture(): AudioClip | null {
+    if (!this.isRecording) {
+      return null; // Already stopped
+    }
+    
     this.isRecording = false;
     const duration = (Date.now() - this.recordingStartTime) / 1000;
 
