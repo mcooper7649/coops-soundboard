@@ -180,30 +180,116 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 transition={{ duration: 0.2 }}
                 className="space-y-6"
               >
-                {/* Output Device Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                    Output Device
-                  </label>
-                  <select
-                    value={localSettings.outputDeviceId}
-                    onChange={(e) => handleSettingChange('outputDeviceId', e.target.value)}
-                    className="input-field"
+                {/* Virtual Audio Routing Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Enable Virtual Audio Routing
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Route audio to virtual devices for Discord integration instead of speakers
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSettingChange('enableVirtualAudioRouting', !localSettings.enableVirtualAudioRouting)}
+                    className={`
+                      relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                      ${localSettings.enableVirtualAudioRouting
+                        ? 'bg-primary-600'
+                        : 'bg-gray-200 dark:bg-gray-700'
+                      }
+                    `}
                   >
-                    <option value="">Select output device</option>
-                    {audioDevices
-                      .filter(device => device.type === 'output')
-                      .map(device => (
-                        <option key={device.id} value={device.id}>
-                          {device.name} {device.isDefault ? '(Default)' : ''}
-                        </option>
-                      ))
-                    }
-                  </select>
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Choose where audio clips will be played. For Discord integration, select a virtual audio device like VB-Cable.
-                  </p>
+                    <span
+                      className={`
+                        inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                        ${localSettings.enableVirtualAudioRouting ? 'translate-x-6' : 'translate-x-1'}
+                      `}
+                    />
+                  </button>
                 </div>
+
+                {/* Virtual Audio Device Selection */}
+                {localSettings.enableVirtualAudioRouting && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                      Virtual Audio Device
+                    </label>
+                    <select
+                      value={localSettings.virtualAudioDeviceId}
+                      onChange={(e) => handleSettingChange('virtualAudioDeviceId', e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">Select virtual audio device</option>
+                      {audioDevices
+                        .filter(device => device.type === 'virtual' || device.isVirtual)
+                        .map(device => (
+                          <option key={device.id} value={device.id}>
+                            {device.name} {device.isDefault ? '(Default)' : ''}
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Choose a virtual audio device that Discord can use as a microphone input. 
+                      You may need to install VB-Cable or similar software.
+                    </p>
+                    
+                    {/* Virtual Device Info */}
+                    {localSettings.virtualAudioDeviceId && (
+                      <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                          Setup Instructions:
+                        </h4>
+                        <ol className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+                          <li>1. In Discord, go to User Settings → Voice & Video</li>
+                          <li>2. Set "Input Device" to the selected virtual device</li>
+                          <li>3. Test your microphone to ensure it's working</li>
+                          <li>4. Audio clips will now play through Discord</li>
+                        </ol>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Output Device Selection (when virtual routing is disabled) */}
+                {!localSettings.enableVirtualAudioRouting && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                      Output Device
+                    </label>
+                    <select
+                      value={localSettings.outputDeviceId}
+                      onChange={(e) => handleSettingChange('outputDeviceId', e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">Default Output (System Default)</option>
+                      {audioDevices
+                        .filter(device => device.type === 'output' && !device.isVirtual)
+                        .map(device => (
+                          <option key={device.id} value={device.id}>
+                            {device.name} {device.isDefault ? '(Default)' : ''}
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Choose where audio clips will be played. For Discord integration, enable virtual audio routing above.
+                    </p>
+                    
+                    {/* Current Output Device Info */}
+                    {localSettings.outputDeviceId && (
+                      <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <h4 className="font-medium text-green-900 dark:text-green-100 mb-2">
+                          Selected Output Device:
+                        </h4>
+                        <p className="text-sm text-green-800 dark:text-green-200">
+                          {audioDevices.find(d => d.id === localSettings.outputDeviceId)?.name || localSettings.outputDeviceId}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Audio Quality */}
                 <div>

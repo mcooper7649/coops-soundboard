@@ -6,6 +6,7 @@ import { AudioClip, AppSettings, RecordingState, PlaybackState } from '../../sha
 import RecorderButton from './RecorderButton';
 import ClipCard from './ClipCard';
 import SettingsPanel from './SettingsPanel';
+import AudioTestPanel from './AudioTestPanel';
 import { useTheme } from '../hooks/useTheme';
 import { useAudioManager } from '../hooks/useAudioManager';
 
@@ -154,7 +155,7 @@ const SoundboardApp: React.FC = () => {
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
             {/* Left Sidebar - Recorder */}
-            <div className="lg:col-span-1">
+            <div className="lg:col-span-1 space-y-6">
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -187,6 +188,9 @@ const SoundboardApp: React.FC = () => {
                   </motion.div>
                 )}
               </motion.div>
+
+              {/* Audio Test Panel */}
+              <AudioTestPanel />
             </div>
 
             {/* Main Content - Clips Grid */}

@@ -132,12 +132,80 @@ To use SoundBoard with Discord or other applications:
    - **macOS**: Install BlackHole
    - **Linux**: Use PulseAudio loopback or similar
 
-2. **Configure Output**:
+2. **Configure Virtual Audio Routing**:
    - Go to Settings → Audio
-   - Select your virtual audio device as the output
+   - Enable "Virtual Audio Routing"
+   - Select your virtual audio device
    - Set Discord's input to the same virtual device
 
 3. **Enjoy**: Your clips will now play through Discord!
+
+### Virtual Audio Routing Setup
+
+The app now includes built-in virtual audio routing that automatically detects and configures virtual audio devices for Discord integration.
+
+#### Option 1: PulseAudio Virtual Sink (Linux - Recommended)
+
+1. **Install PulseAudio utilities:**
+   ```bash
+   sudo apt install pulseaudio-utils
+   ```
+
+2. **Create a virtual sink:**
+   ```bash
+   pactl load-module module-null-sink sink_name=discord-sink sink_properties=device.description="Discord-Sink"
+   ```
+
+3. **In the SoundBoard app:**
+   - Go to Settings → Audio
+   - Enable "Virtual Audio Routing"
+   - Select the "Discord-Sink" device
+
+4. **In Discord:**
+   - Go to User Settings → Voice & Video
+   - Set "Input Device" to "Discord-Sink.monitor"
+   - Test your microphone
+
+#### Option 2: VB-Cable (Cross-platform)
+
+1. **Download and install VB-Cable:**
+   - [VB-Cable Virtual Audio Device](https://vb-audio.com/Cable/)
+
+2. **In the SoundBoard app:**
+   - Go to Settings → Audio
+   - Enable "Virtual Audio Routing"
+   - Select "VB-Cable Virtual Audio Device"
+
+3. **In Discord:**
+   - Go to User Settings → Voice & Video
+   - Set "Input Device" to "CABLE Input (VB-Audio Virtual Cable)"
+   - Test your microphone
+
+#### Option 3: ALSA Loopback (Linux)
+
+1. **Load ALSA loopback module:**
+   ```bash
+   sudo modprobe snd-aloop
+   ```
+
+2. **In the SoundBoard app:**
+   - Go to Settings → Audio
+   - Enable "Virtual Audio Routing"
+   - Select the ALSA loopback device
+
+### How Virtual Audio Routing Works
+
+When virtual audio routing is enabled:
+- Audio clips play through the selected virtual device instead of your speakers
+- Discord picks up the audio from the virtual device as if it were a microphone
+- Other users in your Discord voice channel can hear your soundboard clips
+- Your speakers remain silent (no audio feedback)
+
+### Troubleshooting Virtual Audio
+
+- **No virtual devices showing up?** Make sure you've installed the necessary software (PulseAudio utils, VB-Cable, etc.)
+- **Discord not picking up audio?** Check that Discord is set to use the virtual device as input
+- **Audio quality issues?** Try different virtual devices or check your system's audio settings
 
 ### Supported Audio Formats
 

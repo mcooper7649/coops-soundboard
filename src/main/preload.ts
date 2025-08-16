@@ -11,6 +11,7 @@ const IPC_CHANNELS = {
   PLAY_CLIP: 'play-clip',
   STOP_PLAYBACK: 'stop-playback',
   PLAYBACK_STATE_CHANGED: 'playback-state-changed',
+  PLAYBACK_ERROR: 'playback-error',
   
   // Clip management
   GET_CLIPS: 'get-clips',
@@ -72,6 +73,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC_CHANNELS.HOTKEY_PRESSED, (_, clipId) => callback(clipId));
   },
   
+  onPlaybackError: (callback: (errorData: any) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.PLAYBACK_ERROR, (_, errorData) => callback(errorData));
+  },
+  
   // Remove event listeners
   removeAllListeners: (channel: string) => {
     ipcRenderer.removeAllListeners(channel);
@@ -99,6 +104,7 @@ declare global {
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;
       onHotkeyPressed: (callback: (clipId: string) => void) => void;
+      onPlaybackError: (callback: (errorData: any) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
   }

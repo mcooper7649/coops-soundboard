@@ -59,12 +59,21 @@ const ClipCard: React.FC<ClipCardProps> = ({
   };
 
   const formatDate = (date: Date): string => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(date);
+    try {
+      // Ensure date is valid
+      if (!(date instanceof Date) || isNaN(date.getTime())) {
+        return 'Invalid date';
+      }
+      return new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    } catch (error) {
+      console.error('Date formatting error:', error);
+      return 'Invalid date';
+    }
   };
 
   const cardVariants = {

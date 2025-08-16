@@ -7,19 +7,28 @@ export interface AudioClip {
   hotkey?: string;
 }
 
+export interface PlaybackError {
+  message: string;
+  details?: string;
+}
+
 export interface AudioDevice {
   id: string;
   name: string;
-  type: 'input' | 'output';
+  type: 'input' | 'output' | 'virtual';
   isDefault: boolean;
+  isVirtual?: boolean;
+  description?: string;
 }
 
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   outputDeviceId: string;
+  virtualAudioDeviceId: string; // New field for virtual audio routing
   clipsDirectory: string;
   enableHotkeys: boolean;
   volume: number;
+  enableVirtualAudioRouting: boolean; // New field to enable/disable virtual routing
 }
 
 export interface RecordingState {
@@ -51,6 +60,7 @@ export const IPC_CHANNELS = {
   PLAY_CLIP: 'play-clip',
   STOP_PLAYBACK: 'stop-playback',
   PLAYBACK_STATE_CHANGED: 'playback-state-changed',
+  PLAYBACK_ERROR: 'playback-error',
   
   // Clip management
   GET_CLIPS: 'get-clips',
@@ -77,6 +87,7 @@ export type IpcEventMap = {
   [IPC_CHANNELS.PLAY_CLIP]: string;
   [IPC_CHANNELS.STOP_PLAYBACK]: void;
   [IPC_CHANNELS.PLAYBACK_STATE_CHANGED]: PlaybackState;
+  [IPC_CHANNELS.PLAYBACK_ERROR]: PlaybackError;
   [IPC_CHANNELS.GET_CLIPS]: AudioClip[];
   [IPC_CHANNELS.SAVE_CLIP]: AudioClip;
   [IPC_CHANNELS.DELETE_CLIP]: string;

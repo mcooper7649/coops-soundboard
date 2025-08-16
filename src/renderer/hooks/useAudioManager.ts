@@ -21,6 +21,7 @@ declare global {
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;
       onHotkeyPressed: (callback: (clipId: string) => void) => void;
+      onPlaybackError: (callback: (errorData: any) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
   }
@@ -41,12 +42,15 @@ export const useAudioManager = () => {
   const [settings, setSettings] = useState<AppSettings>({
     theme: 'system',
     outputDeviceId: '',
+    virtualAudioDeviceId: '',
     clipsDirectory: '',
     enableHotkeys: true,
-    volume: 1.0
+    volume: 1.0,
+    enableVirtualAudioRouting: false
   });
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   // Load initial data
   useEffect(() => {
@@ -99,11 +103,21 @@ export const useAudioManager = () => {
       console.log('Hotkey pressed for clip:', clipId);
     };
 
+    const handlePlaybackError = (errorData: any) => {
+      console.error('Playback error:', errorData);
+      setPlaybackError(errorData.message || 'Audio playback failed');
+      // Clear error after 5 seconds
+      setTimeout(() => setPlaybackError(null), 5000);
+    };
+
     // Register event listeners
     window.electronAPI.onRecordingStateChanged(handleRecordingStateChanged);
     window.electronAPI.onPlaybackStateChanged(handlePlaybackStateChanged);
     window.electronAPI.onClipSaved(handleClipSaved);
     window.electronAPI.onHotkeyPressed(handleHotkeyPressed);
+    
+    // Listen for playback errors
+    window.electronAPI.onPlaybackError(handlePlaybackError);
 
     // Cleanup
     return () => {
@@ -111,6 +125,7 @@ export const useAudioManager = () => {
       window.electronAPI.removeAllListeners('playback-state-changed');
       window.electronAPI.removeAllListeners('clip-saved');
       window.electronAPI.removeAllListeners('hotkey-pressed');
+      window.electronAPI.removeAllListeners('playback-error');
     };
   }, []);
 
@@ -251,6 +266,7 @@ export const useAudioManager = () => {
     settings,
     audioDevices,
     isLoading,
+    playbackError,
     startRecording,
     stopRecording,
     playClip,

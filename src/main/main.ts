@@ -16,6 +16,10 @@ interface StoreSchema {
 const mic = require('mic');
 const wav = require('wav');
 
+// Audio playback imports
+const player = require('play-sound')({});
+const { exec } = require('child_process');
+
 class SoundboardApp {
   private mainWindow: BrowserWindow | null = null;
   private store: any;
@@ -30,6 +34,7 @@ class SoundboardApp {
     currentClipId: undefined,
     progress: 0
   };
+  private currentPlayback: any = null;
 
   constructor() {
     this.store = new Store();
@@ -155,6 +160,11 @@ class SoundboardApp {
     ipcMain.handle(IPC_CHANNELS.UNREGISTER_HOTKEY, (_, clipId: string) => {
       return this.unregisterHotkey(clipId);
     });
+
+    // Handle playback errors
+    ipcMain.on('playback-error', (_, errorData) => {
+      this.mainWindow?.webContents.send('playback-error', errorData);
+    });
   }
 
   private startRecording(): void {
@@ -255,7 +265,10 @@ class SoundboardApp {
 
     const clips = this.getClips();
     const clip = clips.find(c => c.id === clipId);
-    if (!clip || !fs.existsSync(clip.filePath)) return;
+    if (!clip || !fs.existsSync(clip.filePath)) {
+      console.error('Clip not found or file missing:', clipId);
+      return;
+    }
 
     this.playbackState = {
       isPlaying: true,
@@ -266,14 +279,357 @@ class SoundboardApp {
     // Notify renderer of playback state change
     this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
 
-    // In a real implementation, you would use a proper audio library like node-speaker
-    // For now, we'll simulate playback
-    setTimeout(() => {
+    try {
+      console.log('Playing clip:', clip.filePath);
+      
+      // Try multiple playback methods to handle Discord audio conflicts
+      this.tryPlaybackMethods(clip.filePath, clipId);
+      
+    } catch (error) {
+      console.error('Failed to play clip:', error);
       this.stopPlayback();
-    }, clip.duration * 1000);
+    }
+  }
+
+  private tryPlaybackMethods(filePath: string, clipId: string): void {
+    const settings = this.getSettings();
+    
+    // Check if virtual audio routing is enabled and a virtual device is selected
+    if (settings.enableVirtualAudioRouting && settings.virtualAudioDeviceId) {
+      console.log('Using virtual audio routing to device:', settings.virtualAudioDeviceId);
+      this.tryVirtualAudioPlayback(filePath, clipId, settings.virtualAudioDeviceId);
+      return;
+    }
+
+    // Use selected output device if specified
+    if (settings.outputDeviceId && settings.outputDeviceId !== 'default') {
+      console.log('Using selected output device:', settings.outputDeviceId);
+      this.tryOutputDevicePlayback(filePath, clipId, settings.outputDeviceId);
+      return;
+    }
+
+    // Method 1: Try play-sound with default settings
+    console.log('Trying play-sound method...');
+    const audioProcess = player.play(filePath, (err: Error) => {
+      if (err) {
+        console.log('play-sound failed, trying alternative method...');
+        // Method 2: Try using aplay (ALSA) directly
+        this.tryAlsaPlayback(filePath, clipId);
+      } else {
+        console.log('Playback finished for clip:', clipId);
+        this.stopPlayback();
+      }
+    });
+
+    // Store reference to current playback
+    this.currentPlayback = { audioProcess, method: 'play-sound' };
+    
+    // Simulate progress updates
+    const progressInterval = setInterval(() => {
+      if (this.playbackState.isPlaying) {
+        this.playbackState.progress += 0.1;
+        if (this.playbackState.progress >= 1) {
+          this.playbackState.progress = 1;
+          clearInterval(progressInterval);
+        }
+        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
+      } else {
+        clearInterval(progressInterval);
+      }
+    }, 100);
+  }
+
+  private tryAlsaPlayback(filePath: string, clipId: string): void {
+    console.log('Trying ALSA playback method...');
+    
+    // Use aplay command directly to bypass Discord audio conflicts
+    const audioProcess = exec(`aplay "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+      if (error) {
+        console.log('ALSA playback failed, trying PulseAudio method...');
+        // Method 3: Try using paplay (PulseAudio)
+        this.tryPulseAudioPlayback(filePath, clipId);
+      } else {
+        console.log('ALSA playback finished for clip:', clipId);
+        this.stopPlayback();
+      }
+    });
+
+    // Update current playback reference
+    this.currentPlayback = { audioProcess, method: 'alsa' };
+  }
+
+  private tryPulseAudioPlayback(filePath: string, clipId: string): void {
+    console.log('Trying PulseAudio playback method...');
+    
+    // Use paplay command to play through PulseAudio
+    const audioProcess = exec(`paplay "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+      if (error) {
+        console.log('All playback methods failed');
+        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+          message: 'All audio playback methods failed. Try closing Discord or changing audio settings.',
+          details: error.message
+        });
+        this.stopPlayback();
+      } else {
+        console.log('PulseAudio playback finished for clip:', clipId);
+        this.stopPlayback();
+      }
+    });
+
+    // Update current playback reference
+    this.currentPlayback = { audioProcess, method: 'pulseaudio' };
+  }
+
+  private tryVirtualAudioPlayback(filePath: string, clipId: string, virtualDeviceId: string): void {
+    console.log('Trying virtual audio playback method...');
+    console.log('Virtual device ID:', virtualDeviceId);
+    
+    // Validate that the virtual device actually exists
+    if (!this.isValidVirtualDevice(virtualDeviceId)) {
+      console.log('Invalid virtual device ID, falling back to default...');
+      this.tryPlaybackMethods(filePath, clipId);
+      return;
+    }
+    
+    try {
+      let audioProcess: any;
+      
+      if (virtualDeviceId.startsWith('pulse-')) {
+        // PulseAudio virtual device - extract the actual device name
+        const deviceId = virtualDeviceId.replace('pulse-', '');
+        console.log('Using PulseAudio device ID:', deviceId);
+        
+        // Get the actual device name from pactl
+        try {
+          const { execSync } = require('child_process');
+          const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+          const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+          
+          for (const line of lines) {
+            const parts = line.split('\t');
+            if (parts[0] === deviceId && parts.length >= 2) {
+              const deviceName = parts[1];
+              console.log('Found device name:', deviceName);
+              
+              audioProcess = exec(`paplay --device="${deviceName}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+                if (error) {
+                  console.log('Virtual PulseAudio playback failed, falling back to default...');
+                  this.tryPlaybackMethods(filePath, clipId);
+                } else {
+                  console.log('Virtual PulseAudio playback finished for clip:', clipId);
+                  this.stopPlayback();
+                }
+              });
+              break;
+            }
+          }
+          
+          if (!audioProcess) {
+            console.log('Device not found, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+            return;
+          }
+        } catch (error) {
+          console.log('Could not get device name, falling back to default...');
+          this.tryPlaybackMethods(filePath, clipId);
+          return;
+        }
+      } else if (virtualDeviceId.startsWith('alsa-')) {
+        // ALSA virtual device
+        const cardId = virtualDeviceId.replace('alsa-', '');
+        audioProcess = exec(`aplay -D hw:${cardId},0 "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('Virtual ALSA playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('Virtual ALSA playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      } else if (virtualDeviceId === 'soundboard-output') {
+        // SoundBoard virtual output device
+        console.log('Using SoundBoard virtual output device directly');
+        audioProcess = exec(`paplay --device=soundboard-output "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('SoundBoard virtual output playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('SoundBoard virtual output playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      } else if (virtualDeviceId === 'vb-cable') {
+        // VB-Cable virtual device (Windows-style, but we'll try on Linux)
+        audioProcess = exec(`paplay --device=VB-Audio "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('VB-Cable playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('VB-Cable playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      } else {
+        // Generic virtual device - try PulseAudio first
+        audioProcess = exec(`paplay --device="${virtualDeviceId}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('Generic virtual device playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('Generic virtual device playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      }
+
+      // Store reference to current playback
+      this.currentPlayback = { audioProcess, method: 'virtual' };
+      
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        if (this.playbackState.isPlaying) {
+          this.playbackState.progress += 0.1;
+          if (this.playbackState.progress >= 1) {
+            this.playbackState.progress = 1;
+            clearInterval(progressInterval);
+          }
+          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
+        } else {
+          clearInterval(progressInterval);
+        }
+      }, 100);
+      
+    } catch (error) {
+      console.error('Virtual audio playback failed:', error);
+      // Fall back to regular playback methods
+      this.tryPlaybackMethods(filePath, clipId);
+    }
+  }
+
+  private tryOutputDevicePlayback(filePath: string, clipId: string, outputDeviceId: string): void {
+    console.log('Trying output device playback method...');
+    console.log('Output device ID:', outputDeviceId);
+    
+    try {
+      let audioProcess: any;
+      
+      if (outputDeviceId.startsWith('pulse-')) {
+        // PulseAudio output device - extract the actual device name
+        const deviceId = outputDeviceId.replace('pulse-', '');
+        console.log('Using PulseAudio device ID:', deviceId);
+        
+        // Get the actual device name from pactl
+        try {
+          const { execSync } = require('child_process');
+          const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+          const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+          
+          for (const line of lines) {
+            const parts = line.split('\t');
+            if (parts[0] === deviceId && parts.length >= 2) {
+              const deviceName = parts[1];
+              console.log('Found device name:', deviceName);
+              
+              audioProcess = exec(`paplay --device="${deviceName}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+                if (error) {
+                  console.log('Output device playback failed, falling back to default...');
+                  this.tryPlaybackMethods(filePath, clipId);
+                } else {
+                  console.log('Output device playback finished for clip:', clipId);
+                  this.stopPlayback();
+                }
+              });
+              break;
+            }
+          }
+          
+          if (!audioProcess) {
+            console.log('Device not found, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+            return;
+          }
+        } catch (error) {
+          console.log('Could not get device name, falling back to default...');
+          this.tryPlaybackMethods(filePath, clipId);
+          return;
+        }
+      } else if (outputDeviceId === 'soundboard-output') {
+        // SoundBoard virtual output device
+        console.log('Using SoundBoard virtual output device directly');
+        audioProcess = exec(`paplay --device=soundboard-output "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('SoundBoard virtual output playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('SoundBoard virtual output playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      } else if (outputDeviceId.startsWith('alsa-')) {
+        // ALSA output device
+        const cardId = outputDeviceId.replace('alsa-', '');
+        audioProcess = exec(`aplay -D hw:${cardId},0 "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('Output device playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('Output device playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      } else {
+        // Generic output device - try PulseAudio first
+        audioProcess = exec(`paplay --device="${outputDeviceId}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
+          if (error) {
+            console.log('Output device playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId);
+          } else {
+            console.log('Output device playback finished for clip:', clipId);
+            this.stopPlayback();
+          }
+        });
+      }
+
+      // Store reference to current playback
+      this.currentPlayback = { audioProcess, method: 'output-device' };
+      
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        if (this.playbackState.isPlaying) {
+          this.playbackState.progress += 0.1;
+          if (this.playbackState.progress >= 1) {
+            this.playbackState.progress = 1;
+            clearInterval(progressInterval);
+          }
+          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
+        } else {
+          clearInterval(progressInterval);
+        }
+      }, 100);
+      
+    } catch (error) {
+      console.error('Output device playback failed:', error);
+      // Fall back to regular playback methods
+      this.tryPlaybackMethods(filePath, clipId);
+    }
   }
 
   private stopPlayback(): void {
+    // Stop current playback if active
+    if (this.currentPlayback) {
+      try {
+        if (this.currentPlayback.audioProcess) {
+          // Kill the audio process if it's still running
+          if (this.currentPlayback.audioProcess.kill) {
+            this.currentPlayback.audioProcess.kill();
+          }
+        }
+      } catch (error) {
+        console.error('Error stopping playback:', error);
+      }
+      this.currentPlayback = null;
+    }
+
     this.playbackState = {
       isPlaying: false,
       currentClipId: undefined,
@@ -284,7 +640,12 @@ class SoundboardApp {
   }
 
   private getClips(): AudioClip[] {
-    return this.store.get('clips', []) as AudioClip[];
+    const clips = this.store.get('clips', []) as any[];
+    // Convert createdAt strings back to Date objects
+    return clips.map(clip => ({
+      ...clip,
+      createdAt: clip.createdAt ? new Date(clip.createdAt) : new Date()
+    }));
   }
 
   private saveClip(clip: AudioClip): AudioClip {
@@ -337,9 +698,11 @@ class SoundboardApp {
     const defaultSettings: AppSettings = {
       theme: 'system',
       outputDeviceId: '',
+      virtualAudioDeviceId: '',
       clipsDirectory: this.clipsDirectory,
       enableHotkeys: true,
-      volume: 1.0
+      volume: 1.0,
+      enableVirtualAudioRouting: false
     };
 
     return { ...defaultSettings, ...this.store.get('settings', {}) };
@@ -347,6 +710,13 @@ class SoundboardApp {
 
   private updateSettings(settings: Partial<AppSettings>): AppSettings {
     const currentSettings = this.getSettings();
+    
+    // Validate virtual audio device ID if it's being updated
+    if (settings.virtualAudioDeviceId && !this.isValidVirtualDevice(settings.virtualAudioDeviceId)) {
+      console.log('Invalid virtual audio device ID, falling back to default');
+      settings.virtualAudioDeviceId = '';
+    }
+    
     const updatedSettings = { ...currentSettings, ...settings };
     
     this.store.set('settings', updatedSettings);
@@ -359,14 +729,170 @@ class SoundboardApp {
     return updatedSettings;
   }
 
+  private isValidVirtualDevice(deviceId: string): boolean {
+    try {
+      if (deviceId === 'soundboard-output') {
+        // Check if soundboard-output exists
+        const { execSync } = require('child_process');
+        const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+        return pulseOutput.includes('soundboard-output');
+      }
+      
+      if (deviceId.startsWith('pulse-')) {
+        // Check if PulseAudio device exists
+        const { execSync } = require('child_process');
+        const deviceIdNum = deviceId.replace('pulse-', '');
+        const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+        const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+        
+        for (const line of lines) {
+          const parts = line.split('\t');
+          if (parts[0] === deviceIdNum && parts.length >= 2) {
+            return true;
+          }
+        }
+        return false;
+      }
+      
+      if (deviceId.startsWith('alsa-')) {
+        // Check if ALSA device exists
+        const { execSync } = require('child_process');
+        const cardId = deviceId.replace('alsa-', '');
+        const alsaOutput = execSync('aplay -l', { stdio: 'pipe' }).toString();
+        return alsaOutput.includes(`card ${cardId}:`);
+      }
+      
+      return false;
+    } catch (error) {
+      console.log('Error validating virtual device:', error);
+      return false;
+    }
+  }
+
   private getAudioDevices(): AudioDevice[] {
-    // In a real implementation, you would use a library like node-speaker or similar
-    // to get actual audio devices. For now, return mock devices.
-    return [
-      { id: 'default', name: 'Default Output', type: 'output', isDefault: true },
-      { id: 'vb-cable', name: 'VB-Cable Virtual Audio', type: 'output', isDefault: false },
-      { id: 'blackhole', name: 'BlackHole 2ch', type: 'output', isDefault: false }
-    ];
+    try {
+      const devices: AudioDevice[] = [];
+      
+      // Add default device
+      devices.push({
+        id: 'default',
+        name: 'Default Output',
+        type: 'output',
+        isDefault: true
+      });
+
+      // Try to get PulseAudio sinks (including virtual ones)
+      try {
+        const { execSync } = require('child_process');
+        const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+        const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+        
+        lines.forEach((line: string, index: number) => {
+          const parts = line.split('\t');
+          if (parts.length >= 2) {
+            const deviceName = parts[1];
+            const deviceId = parts[0];
+            
+            // Skip monitor sources and other non-playback devices
+            if (deviceName.toLowerCase().includes('monitor') || 
+                deviceName.toLowerCase().includes('loopback')) {
+              return;
+            }
+            
+            const isVirtual = deviceName.toLowerCase().includes('virtual') || 
+                             deviceName.toLowerCase().includes('null') ||
+                             deviceName.toLowerCase().includes('soundboard-output');
+            
+            // Determine if it's headphones, speakers, or other
+            let displayName = deviceName;
+            if (deviceName.toLowerCase().includes('bluetooth') || deviceName.toLowerCase().includes('bluez')) {
+              displayName = `🎧 ${deviceName}`;
+            } else if (deviceName.toLowerCase().includes('speaker')) {
+              displayName = `📺 ${deviceName}`;
+            } else if (deviceName.toLowerCase().includes('hdmi')) {
+              displayName = `📺 ${deviceName}`;
+            } else if (isVirtual) {
+              displayName = `🔌 ${deviceName}`;
+            }
+            
+            devices.push({
+              id: `pulse-${deviceId}`,
+              name: displayName,
+              type: isVirtual ? 'virtual' : 'output',
+              isDefault: index === 0,
+              isVirtual,
+              description: isVirtual ? 'Virtual device for Discord integration' : undefined
+            });
+          }
+        });
+      } catch (error: any) {
+        console.log('Could not get PulseAudio devices:', error.message);
+      }
+
+      // Try to get ALSA devices
+      try {
+        const { execSync } = require('child_process');
+        const alsaOutput = execSync('aplay -l', { stdio: 'pipe' }).toString();
+        const lines = alsaOutput.split('\n').filter((line: string) => line.includes('card'));
+        
+        lines.forEach((line: string, index: number) => {
+          const match = line.match(/card (\d+): (.+?) \[(.+?)\]/);
+          if (match) {
+            const deviceName = `${match[2]} (${match[3]})`;
+            const isVirtual = deviceName.toLowerCase().includes('virtual') || 
+                             deviceName.toLowerCase().includes('null') ||
+                             deviceName.toLowerCase().includes('loopback');
+            
+            devices.push({
+              id: `alsa-${match[1]}`,
+              name: deviceName,
+              type: isVirtual ? 'virtual' : 'output',
+              isDefault: false,
+              isVirtual,
+              description: isVirtual ? 'Virtual device for Discord integration' : undefined
+            });
+          }
+        });
+      } catch (error: any) {
+        console.log('Could not get ALSA devices:', error.message);
+      }
+
+      // Add common virtual audio devices that users might install
+      const commonVirtualDevices = [
+        {
+          id: 'soundboard-output',
+          name: '🔌 SoundBoard Virtual Output',
+          type: 'virtual' as const,
+          isDefault: false,
+          isVirtual: true,
+          description: 'Virtual output device for Discord integration (created by setup script)'
+        },
+        {
+          id: 'vb-cable',
+          name: '🔌 VB-Cable Virtual Audio Device',
+          type: 'virtual' as const,
+          isDefault: false,
+          isVirtual: true,
+          description: 'Virtual audio cable for Discord integration (requires VB-Cable installation)'
+        }
+      ];
+
+      // Only add these if they don't already exist
+      commonVirtualDevices.forEach(virtualDevice => {
+        if (!devices.some(d => d.id === virtualDevice.id)) {
+          devices.push(virtualDevice);
+        }
+      });
+
+      return devices.length > 0 ? devices : [
+        { id: 'default', name: 'Default Output', type: 'output', isDefault: true }
+      ];
+    } catch (error) {
+      console.error('Error getting audio devices:', error);
+      return [
+        { id: 'default', name: 'Default Output', type: 'output', isDefault: true }
+      ];
+    }
   }
 
   private registerHotkey(assignment: { clipId: string; key: string; modifiers: string[] }): boolean {
