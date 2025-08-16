@@ -433,11 +433,13 @@ class SoundboardApp {
         console.log(`System audio PulseAudio playback exited with code: ${code}, signal: ${signal}`);
         if (code === 0) {
           console.log('System audio PulseAudio playback finished successfully');
-          // This callback ensures playback stops when the audio finishes
-          if (this.playbackState.isPlaying && this.playbackState.currentClipId === clipId) {
-            console.log('Stopping playback from spawn exit callback for clip:', clipId);
-            this.stopPlayback();
-          }
+          // Add a small buffer delay to ensure audio completes before stopping
+          setTimeout(() => {
+            if (this.playbackState.isPlaying && this.playbackState.currentClipId === clipId) {
+              console.log('Stopping playback from spawn exit callback for clip:', clipId);
+              this.stopPlayback();
+            }
+          }, 200); // 200ms buffer to ensure audio completion
         } else {
           console.error('System audio PulseAudio playback failed with code:', code);
           this.handlePlaybackError(new Error(`PulseAudio playback failed with code ${code}`), clipId, 'system-audio-pulseaudio');
@@ -488,21 +490,7 @@ class SoundboardApp {
     // Store reference to current playback
     this.currentPlayback = { audioProcess, method: 'play-sound' };
     
-    // REMOVED: Timeout system - let audio finish naturally
-    
-    // Simulate progress updates
-    const progressInterval = setInterval(() => {
-      if (this.playbackState.isPlaying) {
-        this.playbackState.progress += 0.1;
-        if (this.playbackState.progress >= 1) {
-          this.playbackState.progress = 1;
-          clearInterval(progressInterval);
-        }
-        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
-      } else {
-        clearInterval(progressInterval);
-      }
-    }, 100);
+    // REMOVED: Progress interval system - let audio finish naturally
     
     // Handle play-sound errors
     if (audioProcess && audioProcess.on) {
@@ -723,7 +711,10 @@ class SoundboardApp {
           console.log(`SoundBoard virtual output playback exited with code: ${code}, signal: ${signal}`);
           if (code === 0) {
             console.log('SoundBoard virtual output playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
-            this.stopPlayback();
+            // Add a small buffer delay to ensure audio completes before stopping
+            setTimeout(() => {
+              this.stopPlayback();
+            }, 200); // 200ms buffer to ensure audio completion
           } else {
             console.log('SoundBoard virtual output playback failed, falling back to default...');
             this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
@@ -872,11 +863,7 @@ class SoundboardApp {
     // Stop current playback if active
     if (this.currentPlayback) {
       try {
-        // Clear progress interval if it exists
-        if (this.currentPlayback.progressInterval) {
-          clearInterval(this.currentPlayback.progressInterval);
-          console.log('Cleared progress interval');
-        }
+        // Progress interval cleanup removed - no more artificial progress systems
         
         // Legacy completion timeout cleanup removed - no more artificial timeouts
         
