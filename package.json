@@ -5,8 +5,10 @@
   "main": "dist/main/main/main.js",
   "homepage": "./",
   "scripts": {
-    "start": "concurrently \"npm run build:main\" \"npm run build:renderer\" \"npm run electron\"",
-    "dev": "concurrently \"npm run watch:main\" \"npm run watch:renderer\" \"npm run electron\"",
+    "start": "npm run setup:audio && concurrently \"npm run build:main\" \"npm run build:renderer\" \"npm run electron\"",
+    "dev": "npm run setup:audio && concurrently \"npm run watch:main\" \"npm run watch:renderer\" \"npm run electron\"",
+    "setup:audio": "./scripts/startup-virtual-audio.sh",
+    "audio:setup": "npm run setup:audio",
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json && node scripts/fix-imports.js",
     "build:renderer": "webpack --mode production",
