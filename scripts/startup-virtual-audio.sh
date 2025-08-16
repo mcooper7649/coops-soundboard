@@ -7,7 +7,13 @@ echo "🎵 Starting SoundBoard Virtual Audio Setup..."
 
 # Always clean up any existing virtual devices first
 echo "🧹 Cleaning up any existing virtual devices..."
-pactl list short modules | grep -E "(soundboard|discord|virtual)" | awk '{print $1}' | xargs -r pactl unload-module 2>/dev/null || true
+
+# More comprehensive cleanup - remove all SoundBoard-related modules
+pactl list short modules | grep -E "(soundboard|SoundBoard|virtual-mic|module-null-sink|module-virtual-source|module-loopback)" | awk '{print $1}' | xargs -r pactl unload-module 2>/dev/null || true
+
+# Also clean up any orphaned sinks and sources
+pactl list short sinks | grep -E "(soundboard|virtual)" | awk '{print $1}' | xargs -r pactl unload-module 2>/dev/null || true
+pactl list short sources | grep -E "(soundboard|virtual)" | awk '{print $1}' | xargs -r pactl unload-module 2>/dev/null || true
 
 # Wait a moment for cleanup to complete
 sleep 1

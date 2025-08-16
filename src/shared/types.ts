@@ -47,6 +47,7 @@ export interface PlaybackState {
   isPlaying: boolean;
   currentClipId?: string;
   progress: number;
+  startTime?: number;
 }
 
 export interface HotkeyAssignment {

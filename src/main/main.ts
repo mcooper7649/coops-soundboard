@@ -28,11 +28,13 @@ class SoundboardApp {
   private recordingStream: any = null;
   private recordingStartTime: number = 0;
   private currentRecordingFile: string = '';
+  private recordingTimeout: NodeJS.Timeout | null = null;
   private hotkeyMap = new Map<string, string>(); // hotkey -> clipId
   private playbackState: PlaybackState = {
     isPlaying: false,
     currentClipId: undefined,
-    progress: 0
+    progress: 0,
+    startTime: 0
   };
   private currentPlayback: any = null;
 
@@ -248,6 +250,12 @@ class SoundboardApp {
   private stopRecording(): AudioClip | null {
     if (!this.isRecording) return null;
 
+    // Check if this is a system audio recording
+    if (this.recordingStream && this.recordingStream.process) {
+      console.log('Regular stopRecording called on system audio capture, redirecting...');
+      return this.stopSystemAudioCapture();
+    }
+
     this.isRecording = false;
     const duration = (Date.now() - this.recordingStartTime) / 1000;
 
@@ -294,7 +302,17 @@ class SoundboardApp {
   }
 
   private playClip(clipId: string): void {
-    // Stop current playback
+    console.log(`=== PLAY_CLIP CALLED ===`);
+    console.log(`Clip ID: ${clipId}`);
+    console.log(`Current playback state before:`, this.playbackState);
+    
+    // Safety check: if we're already playing something, stop it first
+    if (this.playbackState.isPlaying) {
+      console.log(`Already playing clip ${this.playbackState.currentClipId}, stopping it first`);
+      this.stopPlayback();
+    }
+    
+    // Stop current playback (in case there are any lingering processes)
     this.stopPlayback();
 
     const clips = this.getClips();
@@ -304,11 +322,19 @@ class SoundboardApp {
       return;
     }
 
+    // Check if this is a system audio capture
+    const isSystemAudio = clip.name.startsWith('System_Audio_') || clip.filePath.includes('system_audio_');
+    console.log('Playing clip:', clip.name, 'isSystemAudio:', isSystemAudio, 'duration:', clip.duration);
+
+    // Set playback state
     this.playbackState = {
       isPlaying: true,
       currentClipId: clipId,
-      progress: 0
+      progress: 0,
+      startTime: Date.now()
     };
+
+    console.log(`New playback state set:`, this.playbackState);
 
     // Notify renderer of playback state change
     this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
@@ -316,8 +342,13 @@ class SoundboardApp {
     try {
       console.log('Playing clip:', clip.filePath);
       
-      // Try multiple playback methods to handle Discord audio conflicts
-      this.tryPlaybackMethods(clip.filePath, clipId);
+      // For system audio files, use a more robust playback method
+      if (isSystemAudio) {
+        this.playSystemAudioClip(clip.filePath, clipId, clip.duration);
+      } else {
+        // Try multiple playback methods to handle Discord audio conflicts
+        this.tryPlaybackMethods(clip.filePath, clipId, isSystemAudio);
+      }
       
     } catch (error) {
       console.error('Failed to play clip:', error);
@@ -325,20 +356,148 @@ class SoundboardApp {
     }
   }
 
-  private tryPlaybackMethods(filePath: string, clipId: string): void {
+  private playSystemAudioClip(filePath: string, clipId: string, duration: number): void {
+    console.log('Using specialized system audio playback for:', clipId);
+    
+    const settings = this.getSettings();
+    
+    // PRIORITY 1: Use virtual audio routing if enabled (for Discord integration)
+    if (settings.enableVirtualAudioRouting && settings.virtualAudioDeviceId) {
+      console.log('Using virtual audio routing for system audio (Discord integration):', settings.virtualAudioDeviceId);
+      this.tryVirtualAudioPlayback(filePath, clipId, settings.virtualAudioDeviceId, true);
+      return;
+    }
+    
+    // PRIORITY 2: Try PulseAudio with explicit device selection
+    if (settings.outputDeviceId && settings.outputDeviceId !== 'default') {
+      console.log('Using selected output device for system audio:', settings.outputDeviceId);
+      const audioProcess = this.createPulseAudioProcess(filePath, settings.outputDeviceId, clipId);
+      
+      if (audioProcess) {
+        this.currentPlayback = { audioProcess, method: 'system-audio-pulseaudio' };
+        this.setupSystemAudioCompletionDetection(clipId, duration, audioProcess);
+        console.log('System audio playback started successfully');
+        return;
+      }
+    }
+    
+    // PRIORITY 3: Use default PulseAudio
+    console.log('Using default PulseAudio for system audio');
+    const audioProcess = this.createPulseAudioProcess(filePath, 'default', clipId);
+    
+    if (audioProcess) {
+      this.currentPlayback = { audioProcess, method: 'system-audio-pulseaudio' };
+      this.setupSystemAudioCompletionDetection(clipId, duration, audioProcess);
+      console.log('System audio playback started successfully');
+    } else {
+      console.error('System audio playback failed, falling back to standard methods');
+      this.tryPlaybackMethods(filePath, clipId, true);
+    }
+  }
+
+  private createPulseAudioProcess(filePath: string, deviceId: string, clipId: string): any {
+    try {
+      let command = `paplay "${filePath}"`; // Default command
+      
+      if (deviceId === 'default') {
+        command = `paplay "${filePath}"`;
+      } else if (deviceId.startsWith('pulse-')) {
+        const deviceNum = deviceId.replace('pulse-', '');
+        // Get device name from PulseAudio
+        const { execSync } = require('child_process');
+        const pulseOutput = execSync('pactl list short sinks', { stdio: 'pipe' }).toString();
+        const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+        
+        for (const line of lines) {
+          const parts = line.split('\t');
+          if (parts[0] === deviceNum && parts.length >= 2) {
+            const deviceName = parts[1];
+            command = `paplay --device="${deviceName}" "${filePath}"`;
+            break;
+          }
+        }
+      }
+      
+      console.log('Executing command:', command);
+      
+      // Use spawn instead of exec for better process control and completion detection
+      const { spawn } = require('child_process');
+      const args = command.split(' ').slice(1); // Remove the command name
+      const audioProcess = spawn('paplay', args);
+      
+      // Set up proper process monitoring
+      audioProcess.on('error', (error: Error) => {
+        console.error('System audio PulseAudio spawn error:', error);
+        this.handlePlaybackError(error, clipId, 'system-audio-pulseaudio');
+      });
+      
+      audioProcess.on('exit', (code: number, signal: string) => {
+        console.log(`System audio PulseAudio playback exited with code: ${code}, signal: ${signal}`);
+        if (code === 0) {
+          console.log('System audio PulseAudio playback finished successfully');
+          // This callback ensures playback stops when the audio finishes
+          if (this.playbackState.isPlaying && this.playbackState.currentClipId === clipId) {
+            console.log('Stopping playback from spawn exit callback for clip:', clipId);
+            this.stopPlayback();
+          }
+        } else {
+          console.error('System audio PulseAudio playback failed with code:', code);
+          this.handlePlaybackError(new Error(`PulseAudio playback failed with code ${code}`), clipId, 'system-audio-pulseaudio');
+        }
+      });
+      
+      return audioProcess;
+      
+    } catch (error) {
+      console.error('Error creating PulseAudio process:', error);
+      return null;
+    }
+  }
+
+  private setupSystemAudioCompletionDetection(clipId: string, duration: number, audioProcess: any): void {
+    console.log(`Setting up completion detection for system audio clip ${clipId} with duration ${duration}s`);
+    
+    // REMOVED: Timeout-based completion detection - let the audio process finish naturally
+    // This is how other users of this library typically handle it - no artificial cutoffs
+    
+    // Set up progress monitoring (for UI updates only, not for completion detection)
+    const startTime = Date.now();
+    const progressInterval = setInterval(() => {
+      if (this.playbackState.isPlaying && this.playbackState.currentClipId === clipId) {
+        // Calculate progress based on duration, but cap at 95% to avoid premature completion
+        const elapsed = (Date.now() - startTime) / 1000;
+        const progress = Math.min(elapsed / duration, 0.95); // Cap at 95% to prevent early cutoff
+        
+        this.playbackState.progress = progress;
+        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
+        
+        // Don't use progress for completion detection - let the process exit handle it
+      } else {
+        clearInterval(progressInterval);
+      }
+    }, 100);
+
+    // Store the interval for cleanup
+    if (!this.currentPlayback) this.currentPlayback = {};
+    this.currentPlayback.progressInterval = progressInterval;
+    
+    console.log(`Progress monitoring set up for clip ${clipId} - letting audio process finish naturally`);
+  }
+
+  private tryPlaybackMethods(filePath: string, clipId: string, isSystemAudio: boolean = false): void {
     const settings = this.getSettings();
     
     // Check if virtual audio routing is enabled and a virtual device is selected
     if (settings.enableVirtualAudioRouting && settings.virtualAudioDeviceId) {
       console.log('Using virtual audio routing to device:', settings.virtualAudioDeviceId);
-      this.tryVirtualAudioPlayback(filePath, clipId, settings.virtualAudioDeviceId);
+      this.tryVirtualAudioPlayback(filePath, clipId, settings.virtualAudioDeviceId, isSystemAudio);
       return;
     }
 
     // Use selected output device if specified
     if (settings.outputDeviceId && settings.outputDeviceId !== 'default') {
       console.log('Using selected output device:', settings.outputDeviceId);
-      this.tryOutputDevicePlayback(filePath, clipId, settings.outputDeviceId);
+      this.tryOutputDevicePlayback(filePath, clipId, settings.outputDeviceId, isSystemAudio);
       return;
     }
 
@@ -348,15 +507,17 @@ class SoundboardApp {
       if (err) {
         console.log('play-sound failed, trying alternative method...');
         // Method 2: Try using aplay (ALSA) directly
-        this.tryAlsaPlayback(filePath, clipId);
+        this.tryAlsaPlayback(filePath, clipId, isSystemAudio);
       } else {
-        console.log('Playback finished for clip:', clipId);
+        console.log('Playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
         this.stopPlayback();
       }
     });
 
     // Store reference to current playback
     this.currentPlayback = { audioProcess, method: 'play-sound' };
+    
+    // REMOVED: Timeout system - let audio finish naturally
     
     // Simulate progress updates
     const progressInterval = setInterval(() => {
@@ -371,9 +532,66 @@ class SoundboardApp {
         clearInterval(progressInterval);
       }
     }, 100);
+    
+    // Handle play-sound errors
+    if (audioProcess && audioProcess.on) {
+      audioProcess.on('error', (error: Error) => {
+        console.error('Play-sound process error:', error);
+        this.handlePlaybackError(error, clipId, 'play-sound');
+      });
+    }
   }
 
-  private tryAlsaPlayback(filePath: string, clipId: string): void {
+  // REMOVED: setupPlaybackTimeout method - no more artificial timeouts
+
+  private cleanupVirtualAudioDevices(): void {
+    console.log('Cleaning up virtual audio devices...');
+    
+    try {
+      const { execSync } = require('child_process');
+      
+      // Get list of all PulseAudio modules
+      const modulesOutput = execSync('pactl list short modules', { stdio: 'pipe' }).toString();
+      const lines = modulesOutput.split('\n').filter((line: string) => line.trim());
+      
+      // Find and remove our virtual audio modules
+      const modulesToRemove: string[] = [];
+      
+      lines.forEach((line: string) => {
+        const parts = line.split('\t');
+        if (parts.length >= 2) {
+          const moduleId = parts[0];
+          const moduleName = parts[1];
+          
+          // Check if this is one of our virtual audio modules
+          if (moduleName.includes('soundboard-output') || 
+              moduleName.includes('SoundBoard-Virtual-Microphone') ||
+              moduleName.includes('module-null-sink') ||
+              moduleName.includes('module-virtual-source') ||
+              moduleName.includes('module-loopback')) {
+            modulesToRemove.push(moduleId);
+          }
+        }
+      });
+      
+      // Remove the modules
+      modulesToRemove.forEach(moduleId => {
+        try {
+          console.log(`Removing PulseAudio module ${moduleId}...`);
+          execSync(`pactl unload-module ${moduleId}`, { stdio: 'pipe' });
+        } catch (error) {
+          console.log(`Failed to remove module ${moduleId}:`, error);
+        }
+      });
+      
+      console.log(`Cleaned up ${modulesToRemove.length} virtual audio modules`);
+      
+    } catch (error) {
+      console.error('Error cleaning up virtual audio devices:', error);
+    }
+  }
+
+  private tryAlsaPlayback(filePath: string, clipId: string, isSystemAudio: boolean = false): void {
     console.log('Trying ALSA playback method...');
     
     // Use aplay command directly to bypass Discord audio conflicts
@@ -381,18 +599,28 @@ class SoundboardApp {
       if (error) {
         console.log('ALSA playback failed, trying PulseAudio method...');
         // Method 3: Try using paplay (PulseAudio)
-        this.tryPulseAudioPlayback(filePath, clipId);
+        this.tryPulseAudioPlayback(filePath, clipId, isSystemAudio);
       } else {
-        console.log('ALSA playback finished for clip:', clipId);
+        console.log('ALSA playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
         this.stopPlayback();
       }
     });
 
     // Update current playback reference
     this.currentPlayback = { audioProcess, method: 'alsa' };
+    
+    // REMOVED: Timeout system - let audio finish naturally
+    
+    // Handle ALSA process errors
+    if (audioProcess && audioProcess.on) {
+      audioProcess.on('error', (error: Error) => {
+        console.error('ALSA process error:', error);
+        this.handlePlaybackError(error, clipId, 'alsa');
+      });
+    }
   }
 
-  private tryPulseAudioPlayback(filePath: string, clipId: string): void {
+  private tryPulseAudioPlayback(filePath: string, clipId: string, isSystemAudio: boolean = false): void {
     console.log('Trying PulseAudio playback method...');
     
     // Use paplay command to play through PulseAudio
@@ -405,23 +633,33 @@ class SoundboardApp {
         });
         this.stopPlayback();
       } else {
-        console.log('PulseAudio playback finished for clip:', clipId);
+        console.log('PulseAudio playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
         this.stopPlayback();
       }
     });
 
     // Update current playback reference
     this.currentPlayback = { audioProcess, method: 'pulseaudio' };
+    
+    // REMOVED: Timeout system - let audio finish naturally
+    
+    // Handle PulseAudio process errors
+    if (audioProcess && audioProcess.on) {
+      audioProcess.on('error', (error: Error) => {
+        console.error('PulseAudio process error:', error);
+        this.handlePlaybackError(error, clipId, 'pulseaudio');
+      });
+    }
   }
 
-  private tryVirtualAudioPlayback(filePath: string, clipId: string, virtualDeviceId: string): void {
+  private tryVirtualAudioPlayback(filePath: string, clipId: string, virtualDeviceId: string, isSystemAudio: boolean = false): void {
     console.log('Trying virtual audio playback method...');
     console.log('Virtual device ID:', virtualDeviceId);
     
     // Validate that the virtual device actually exists
     if (!this.isValidVirtualDevice(virtualDeviceId)) {
       console.log('Invalid virtual device ID, falling back to default...');
-      this.tryPlaybackMethods(filePath, clipId);
+      this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
       return;
     }
     
@@ -448,24 +686,32 @@ class SoundboardApp {
               audioProcess = exec(`paplay --device="${deviceName}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
                 if (error) {
                   console.log('Virtual PulseAudio playback failed, falling back to default...');
-                  this.tryPlaybackMethods(filePath, clipId);
+                  this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
                 } else {
-                  console.log('Virtual PulseAudio playback finished for clip:', clipId);
+                  console.log('Virtual PulseAudio playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
                   this.stopPlayback();
                 }
               });
+              
+              // Handle virtual PulseAudio process errors
+              if (audioProcess && audioProcess.on) {
+                audioProcess.on('error', (error: Error) => {
+                  console.error('Virtual PulseAudio process error:', error);
+                  this.handlePlaybackError(error, clipId, 'virtual-pulseaudio');
+                });
+              }
               break;
             }
           }
           
           if (!audioProcess) {
             console.log('Device not found, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
             return;
           }
         } catch (error) {
           console.log('Could not get device name, falling back to default...');
-          this.tryPlaybackMethods(filePath, clipId);
+          this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           return;
         }
       } else if (virtualDeviceId.startsWith('alsa-')) {
@@ -474,73 +720,92 @@ class SoundboardApp {
         audioProcess = exec(`aplay -D hw:${cardId},0 "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
           if (error) {
             console.log('Virtual ALSA playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           } else {
-            console.log('Virtual ALSA playback finished for clip:', clipId);
+            console.log('Virtual ALSA playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
             this.stopPlayback();
           }
         });
+        
+        // Handle virtual ALSA process errors
+        if (audioProcess && audioProcess.on) {
+          audioProcess.on('error', (error: Error) => {
+            console.error('Virtual ALSA process error:', error);
+            this.handlePlaybackError(error, clipId, 'virtual-alsa');
+          });
+        }
       } else if (virtualDeviceId === 'soundboard-output') {
         // SoundBoard virtual output device
         console.log('Using SoundBoard virtual output device directly');
-        audioProcess = exec(`paplay --device=soundboard-output "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
-          if (error) {
-            console.log('SoundBoard virtual output playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
-          } else {
-            console.log('SoundBoard virtual output playback finished for clip:', clipId);
+        
+        // Use spawn instead of exec for better process control
+        const { spawn } = require('child_process');
+        audioProcess = spawn('paplay', ['--device=soundboard-output', filePath]);
+        
+        // Set up proper process monitoring for virtual audio
+        audioProcess.on('error', (error: Error) => {
+          console.error('SoundBoard virtual output process error:', error);
+          this.handlePlaybackError(error, clipId, 'soundboard-output');
+        });
+        
+        audioProcess.on('exit', (code: number, signal: string) => {
+          console.log(`SoundBoard virtual output playback exited with code: ${code}, signal: ${signal}`);
+          if (code === 0) {
+            console.log('SoundBoard virtual output playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
             this.stopPlayback();
+          } else {
+            console.log('SoundBoard virtual output playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           }
         });
+        
+        // For system audio clips, set up completion detection
+        if (isSystemAudio) {
+          const clips = this.getClips();
+          const clip = clips.find(c => c.id === clipId);
+          if (clip) {
+            this.setupSystemAudioCompletionDetection(clipId, clip.duration, audioProcess);
+          }
+        }
       } else if (virtualDeviceId === 'vb-cable') {
         // VB-Cable virtual device (Windows-style, but we'll try on Linux)
         audioProcess = exec(`paplay --device=VB-Audio "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
           if (error) {
             console.log('VB-Cable playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           } else {
-            console.log('VB-Cable playback finished for clip:', clipId);
+            console.log('VB-Cable playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
             this.stopPlayback();
           }
         });
+        
+        // Handle VB-Cable process errors
+        if (audioProcess && audioProcess.on) {
+          audioProcess.on('error', (error: Error) => {
+            console.error('VB-Cable process error:', error);
+            this.handlePlaybackError(error, clipId, 'vb-cable');
+          });
+        }
       } else {
-        // Generic virtual device - try PulseAudio first
-        audioProcess = exec(`paplay --device="${virtualDeviceId}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
-          if (error) {
-            console.log('Generic virtual device playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
-          } else {
-            console.log('Generic virtual device playback finished for clip:', clipId);
-            this.stopPlayback();
-          }
-        });
+        // Unknown virtual device type, fall back to default
+        console.log('Unknown virtual device type, falling back to default...');
+        this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
+        return;
       }
 
-      // Store reference to current playback
-      this.currentPlayback = { audioProcess, method: 'virtual' };
-      
-      // Simulate progress updates
-      const progressInterval = setInterval(() => {
-        if (this.playbackState.isPlaying) {
-          this.playbackState.progress += 0.1;
-          if (this.playbackState.progress >= 1) {
-            this.playbackState.progress = 1;
-            clearInterval(progressInterval);
-          }
-          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
-        } else {
-          clearInterval(progressInterval);
-        }
-      }, 100);
-      
+      // Update current playback reference
+      if (audioProcess) {
+        this.currentPlayback = { audioProcess, method: 'virtual' };
+        
+            // REMOVED: Timeout system - let audio finish naturally
+      }
     } catch (error) {
-      console.error('Virtual audio playback failed:', error);
-      // Fall back to regular playback methods
-      this.tryPlaybackMethods(filePath, clipId);
+      console.log('Virtual audio playback failed, falling back to default...');
+      this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
     }
   }
 
-  private tryOutputDevicePlayback(filePath: string, clipId: string, outputDeviceId: string): void {
+  private tryOutputDevicePlayback(filePath: string, clipId: string, outputDeviceId: string, isSystemAudio: boolean = false): void {
     console.log('Trying output device playback method...');
     console.log('Output device ID:', outputDeviceId);
     
@@ -548,9 +813,9 @@ class SoundboardApp {
       let audioProcess: any;
       
       if (outputDeviceId.startsWith('pulse-')) {
-        // PulseAudio output device - extract the actual device name
+        // PulseAudio output device
         const deviceId = outputDeviceId.replace('pulse-', '');
-        console.log('Using PulseAudio device ID:', deviceId);
+        console.log('Using PulseAudio output device ID:', deviceId);
         
         // Get the actual device name from pactl
         try {
@@ -566,96 +831,107 @@ class SoundboardApp {
               
               audioProcess = exec(`paplay --device="${deviceName}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
                 if (error) {
-                  console.log('Output device playback failed, falling back to default...');
-                  this.tryPlaybackMethods(filePath, clipId);
+                  console.log('Output device PulseAudio playback failed, falling back to default...');
+                  this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
                 } else {
-                  console.log('Output device playback finished for clip:', clipId);
+                  console.log('Output device PulseAudio playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
                   this.stopPlayback();
                 }
               });
+              
+              // Handle output device PulseAudio process errors
+              if (audioProcess && audioProcess.on) {
+                audioProcess.on('error', (error: Error) => {
+                  console.error('Output device PulseAudio process error:', error);
+                  this.handlePlaybackError(error, clipId, 'output-pulseaudio');
+                });
+              }
               break;
             }
           }
           
           if (!audioProcess) {
             console.log('Device not found, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
             return;
           }
         } catch (error) {
           console.log('Could not get device name, falling back to default...');
-          this.tryPlaybackMethods(filePath, clipId);
+          this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           return;
         }
-      } else if (outputDeviceId === 'soundboard-output') {
-        // SoundBoard virtual output device
-        console.log('Using SoundBoard virtual output device directly');
-        audioProcess = exec(`paplay --device=soundboard-output "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
-          if (error) {
-            console.log('SoundBoard virtual output playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
-          } else {
-            console.log('SoundBoard virtual output playback finished for clip:', clipId);
-            this.stopPlayback();
-          }
-        });
       } else if (outputDeviceId.startsWith('alsa-')) {
         // ALSA output device
         const cardId = outputDeviceId.replace('alsa-', '');
         audioProcess = exec(`aplay -D hw:${cardId},0 "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
           if (error) {
-            console.log('Output device playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
+            console.log('Output device ALSA playback failed, falling back to default...');
+            this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
           } else {
-            console.log('Output device playback finished for clip:', clipId);
+            console.log('Output device ALSA playback finished for clip:', clipId, 'isSystemAudio:', isSystemAudio);
             this.stopPlayback();
           }
         });
+        
+        // Handle output device ALSA process errors
+        if (audioProcess && audioProcess.on) {
+          audioProcess.on('error', (error: Error) => {
+            console.error('Output device ALSA process error:', error);
+            this.handlePlaybackError(error, clipId, 'output-alsa');
+          });
+        }
       } else {
-        // Generic output device - try PulseAudio first
-        audioProcess = exec(`paplay --device="${outputDeviceId}" "${filePath}"`, (error: Error, stdout: string, stderr: string) => {
-          if (error) {
-            console.log('Output device playback failed, falling back to default...');
-            this.tryPlaybackMethods(filePath, clipId);
-          } else {
-            console.log('Output device playback finished for clip:', clipId);
-            this.stopPlayback();
-          }
-        });
+        // Unknown output device type, fall back to default
+        console.log('Unknown output device type, falling back to default...');
+        this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
+        return;
       }
 
-      // Store reference to current playback
-      this.currentPlayback = { audioProcess, method: 'output-device' };
-      
-      // Simulate progress updates
-      const progressInterval = setInterval(() => {
-        if (this.playbackState.isPlaying) {
-          this.playbackState.progress += 0.1;
-          if (this.playbackState.progress >= 1) {
-            this.playbackState.progress = 1;
-            clearInterval(progressInterval);
-          }
-          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
-        } else {
-          clearInterval(progressInterval);
-        }
-      }, 100);
-      
+      // Update current playback reference
+      if (audioProcess) {
+        this.currentPlayback = { audioProcess, method: 'output-device' };
+        
+            // REMOVED: Timeout system - let audio finish naturally
+      }
     } catch (error) {
-      console.error('Output device playback failed:', error);
-      // Fall back to regular playback methods
-      this.tryPlaybackMethods(filePath, clipId);
+      console.log('Output device playback failed, falling back to default...');
+      this.tryPlaybackMethods(filePath, clipId, isSystemAudio);
     }
   }
 
   private stopPlayback(): void {
+    console.log('Stopping playback, current state:', this.playbackState);
+    
     // Stop current playback if active
     if (this.currentPlayback) {
       try {
+        // Clear progress interval if it exists
+        if (this.currentPlayback.progressInterval) {
+          clearInterval(this.currentPlayback.progressInterval);
+          console.log('Cleared progress interval');
+        }
+        
+        // Clear completion timeout if it exists (legacy cleanup)
+        if (this.currentPlayback.completionTimeout) {
+          clearTimeout(this.currentPlayback.completionTimeout);
+          console.log('Cleared completion timeout');
+        }
+        
         if (this.currentPlayback.audioProcess) {
           // Kill the audio process if it's still running
           if (this.currentPlayback.audioProcess.kill) {
+            console.log(`Killing ${this.currentPlayback.method} audio process`);
             this.currentPlayback.audioProcess.kill();
+          }
+          
+          // For exec processes, also try to kill any child processes
+          if (this.currentPlayback.audioProcess.pid) {
+            try {
+              const { execSync } = require('child_process');
+              execSync(`pkill -P ${this.currentPlayback.audioProcess.pid}`, { stdio: 'pipe' });
+            } catch (error) {
+              // Ignore errors when killing child processes
+            }
           }
         }
       } catch (error) {
@@ -664,12 +940,17 @@ class SoundboardApp {
       this.currentPlayback = null;
     }
 
+    // Reset playback state
     this.playbackState = {
       isPlaying: false,
       currentClipId: undefined,
-      progress: 0
+      progress: 0,
+      startTime: 0
     };
 
+    console.log('Playback stopped, new state:', this.playbackState);
+
+    // Notify renderer of playback state change
     this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, this.playbackState);
   }
 
@@ -875,14 +1156,14 @@ class SoundboardApp {
       // Import execSync at the top
       const { execSync } = require('child_process');
       
-      // Check if ffmpeg is available
+      // Check if parecord is available
       try {
-        execSync('ffmpeg -version', { stdio: 'pipe' });
+        execSync('parecord --version', { stdio: 'pipe' });
       } catch (error) {
-        console.error('FFmpeg is not installed. Please install ffmpeg to use system audio capture.');
+        console.error('Parecord is not available. Please install PulseAudio utilities to use system audio capture.');
         this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
-          message: 'FFmpeg is not installed',
-          details: 'Please install ffmpeg to use system audio capture: sudo apt install ffmpeg'
+          message: 'Parecord is not available',
+          details: 'Please install PulseAudio utilities: sudo apt install pulseaudio-utils'
         });
         this.isRecording = false;
         // Notify renderer of recording state change on error
@@ -943,53 +1224,49 @@ class SoundboardApp {
 
       console.log('Using monitor source:', monitorSourceName);
       
-      // Use ffmpeg to capture from the monitor source
-      const ffmpegCommand = `ffmpeg -f pulse -i "${monitorSourceName}" -acodec pcm_s16le -ar 44100 -ac 1 -y "${this.currentRecordingFile}"`;
+      // Use parecord (PulseAudio native tool) instead of FFmpeg for better reliability
+      const { spawn } = require('child_process');
+      const parecordArgs = [
+        '--format=s16le',
+        '--rate=44100',
+        '--channels=1',
+        '--device=' + monitorSourceName,
+        this.currentRecordingFile
+      ];
       
-      console.log('Running ffmpeg command:', ffmpegCommand);
+      // Note: Monitor sources can be loud by default - this is normal PulseAudio behavior
+      // The volume will be the same as what you hear through your speakers
       
-      const audioProcess = exec(ffmpegCommand, (error: Error, stdout: string, stderr: string) => {
-        if (error) {
-          console.error('FFmpeg system audio capture failed:', error);
-          console.error('FFmpeg stderr:', stderr);
-          this.isRecording = false;
-          
-          // Notify renderer of the error
-          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
-            message: 'System audio capture failed',
-            details: error.message || 'FFmpeg failed to capture audio'
-          });
-          
-          // Notify renderer of recording state change on error
-          this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
-            isRecording: false,
-            duration: 0,
-            startTime: undefined
-          });
-        } else {
-          console.log('FFmpeg system audio capture finished successfully');
-          this.isRecording = false;
-          
-          // Notify renderer of recording state change on completion
-          const duration = (Date.now() - this.recordingStartTime) / 1000;
-          this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
-            isRecording: false,
-            duration: Math.round(duration * 100) / 100,
-            startTime: undefined
-          });
-        }
+      console.log('Running parecord with args:', parecordArgs);
+      
+      const audioProcess = spawn('parecord', parecordArgs);
+      
+      // Set up proper process monitoring
+      audioProcess.on('error', (error: Error) => {
+        console.error('Parecord spawn error:', error);
+        this.handleSystemAudioError(error);
       });
-
-      // Store the recording process
-      this.recordingStream = audioProcess;
       
-      // Set up a timer to stop recording after a reasonable duration (e.g., 30 seconds)
-      setTimeout(() => {
-        if (this.isRecording) {
-          console.log('Auto-stopping system audio capture after timeout');
-          this.stopSystemAudioCapture();
-        }
-      }, 30000); // 30 seconds timeout
+      audioProcess.on('exit', (code: number, signal: string) => {
+        console.log('Parecord exited with code:', code, 'signal:', signal);
+        this.handleSystemAudioExit(code, signal);
+      });
+      
+      // Set up stderr monitoring for better debugging
+      audioProcess.stderr.on('data', (data: Buffer) => {
+        console.log('Parecord stderr:', data.toString());
+      });
+      
+      // Store process with PID for proper cleanup
+      this.recordingStream = {
+        process: audioProcess,
+        pid: audioProcess.pid,
+        startTime: Date.now(),
+        method: 'parecord'
+      };
+      
+      // REMOVED: Recording timeout - let recording run until manually stopped
+      // This prevents artificial cutoffs and allows full control
 
     } catch (error) {
       console.error('Failed to start system audio capture:', error);
@@ -1010,6 +1287,46 @@ class SoundboardApp {
     }
   }
 
+  private handleSystemAudioError(error: Error): void {
+    console.error('System audio capture error:', error);
+    this.isRecording = false;
+    
+    // Notify renderer of the error
+    this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+      message: 'System audio capture failed',
+      details: error.message || 'Parecord failed to capture audio'
+    });
+    
+    // Notify renderer of recording state change on error
+    this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+      isRecording: false,
+      duration: 0,
+      startTime: undefined
+    });
+  }
+
+  private handleSystemAudioExit(code: number, signal: string): void {
+    console.log('System audio capture exit - code:', code, 'signal:', signal);
+    
+    if (code === 0) {
+      // Normal exit
+      console.log('Parecord system audio capture finished successfully');
+      this.isRecording = false;
+      
+      // Notify renderer of recording state change on completion
+      const duration = (Date.now() - this.recordingStartTime) / 1000;
+      this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+        isRecording: false,
+        duration: Math.round(duration * 100) / 100,
+        startTime: undefined
+      });
+    } else {
+      // Abnormal exit
+      console.error('Parecord system audio capture failed with code:', code, 'signal:', signal);
+      this.handleSystemAudioError(new Error(`Parecord exited with code ${code} and signal ${signal}`));
+    }
+  }
+
   private stopSystemAudioCapture(): AudioClip | null {
     if (!this.isRecording) {
       console.log('System audio capture not in progress');
@@ -1021,9 +1338,42 @@ class SoundboardApp {
     const duration = (Date.now() - this.recordingStartTime) / 1000;
 
     if (this.recordingStream) {
-      console.log('Killing FFmpeg process...');
-      this.recordingStream.kill(); // Use kill() to stop the process
+      const { process, pid, method } = this.recordingStream;
+      
+      // Kill the main process
+      if (process && !process.killed) {
+        console.log(`Killing ${method || 'audio'} process...`);
+        process.kill('SIGTERM');
+        
+        // Force kill after 1 second if still running (parecord is more responsive)
+        setTimeout(() => {
+          if (!process.killed) {
+            console.log(`Force killing ${method || 'audio'} process...`);
+            process.kill('SIGKILL');
+          }
+        }, 1000);
+      }
+      
+      // Kill any child processes by PID
+      if (pid) {
+        try {
+          const { execSync } = require('child_process');
+          console.log('Killing child processes for PID:', pid);
+          execSync(`pkill -P ${pid}`, { stdio: 'pipe' });
+          execSync(`kill -9 ${pid}`, { stdio: 'pipe' });
+        } catch (error) {
+          // Ignore errors when killing processes
+          console.log('Error killing child processes:', error);
+        }
+      }
+      
       this.recordingStream = null;
+    }
+
+    // Clear timeout (legacy cleanup)
+    if (this.recordingTimeout) {
+      clearTimeout(this.recordingTimeout);
+      this.recordingTimeout = null;
     }
 
     // Wait a bit for file to be written
@@ -1387,14 +1737,55 @@ class SoundboardApp {
     });
   }
 
+  // Add cleanup method for app shutdown
   public cleanup(): void {
-    // Unregister all hotkeys
-    globalShortcut.unregisterAll();
+    console.log('Cleaning up SoundboardApp...');
     
-    // Stop recording if active
+    // Stop any active recording
     if (this.isRecording) {
-      this.stopRecording();
+      console.log('Stopping active recording...');
+      if (this.recordingStream && this.recordingStream.process) {
+        // This is a system audio capture
+        this.stopSystemAudioCapture();
+      } else {
+        // This is a regular microphone recording
+        this.stopRecording();
+      }
     }
+    
+    // Stop any active playback
+    if (this.playbackState.isPlaying) {
+      console.log('Stopping active playback...');
+      this.stopPlayback();
+    }
+    
+    // Clear any recording timeout (legacy cleanup)
+    if (this.recordingTimeout) {
+      clearTimeout(this.recordingTimeout);
+      this.recordingTimeout = null;
+    }
+    
+    // Clean up virtual audio devices
+    this.cleanupVirtualAudioDevices();
+    
+    // Unregister all hotkeys
+    this.hotkeyMap.clear();
+    
+    console.log('Cleanup completed');
+  }
+
+  // Add method to handle playback errors more gracefully
+  private handlePlaybackError(error: Error, clipId: string, method: string): void {
+    console.error(`Playback error for clip ${clipId} using ${method}:`, error);
+    
+    // Stop playback on error
+    this.stopPlayback();
+    
+    // Notify renderer of the error
+    this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+      message: `Audio playback failed using ${method}`,
+      details: error.message || 'Unknown playback error occurred'
+    });
   }
 }
 
