@@ -32,7 +32,11 @@ const IPC_CHANNELS = {
   // Auto-start service management
   INSTALL_AUTOSTART: 'install-autostart',
   UNINSTALL_AUTOSTART: 'uninstall-autostart',
-  GET_AUTOSTART_STATUS: 'get-autostart-status'
+  GET_AUTOSTART_STATUS: 'get-autostart-status',
+  
+  // System audio capture
+  START_SYSTEM_AUDIO_CAPTURE: 'start-system-audio-capture',
+  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture'
 } as const;
 
 // Expose protected methods that allow the renderer process to use
@@ -65,6 +69,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installAutostart: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_AUTOSTART),
   uninstallAutostart: () => ipcRenderer.invoke(IPC_CHANNELS.UNINSTALL_AUTOSTART),
   getAutostartStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_AUTOSTART_STATUS),
+  
+  // System audio capture
+  startSystemAudioCapture: () => ipcRenderer.invoke(IPC_CHANNELS.START_SYSTEM_AUDIO_CAPTURE),
+  stopSystemAudioCapture: () => ipcRenderer.invoke(IPC_CHANNELS.STOP_SYSTEM_AUDIO_CAPTURE),
   
   // Event listeners
   onRecordingStateChanged: (callback: (state: any) => void) => {
@@ -113,6 +121,8 @@ declare global {
       installAutostart: () => Promise<boolean>;
       uninstallAutostart: () => Promise<boolean>;
       getAutostartStatus: () => Promise<{ isInstalled: boolean; isEnabled: boolean; isActive: boolean }>;
+      startSystemAudioCapture: () => Promise<void>;
+      stopSystemAudioCapture: () => Promise<any>;
       onRecordingStateChanged: (callback: (state: any) => void) => void;
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;

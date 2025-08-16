@@ -346,6 +346,78 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </div>
                 )}
 
+                {/* System Audio Capture Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Enable System Audio Capture
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Record audio from applications like Spotify, YouTube, or Discord
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSettingChange('enableSystemAudioCapture', !localSettings.enableSystemAudioCapture)}
+                    className={`
+                      relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                      ${localSettings.enableSystemAudioCapture
+                        ? 'bg-primary-600'
+                        : 'bg-gray-200 dark:bg-gray-700'
+                      }
+                    `}
+                  >
+                    <span
+                      className={`
+                        inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                        ${localSettings.enableSystemAudioCapture ? 'translate-x-6' : 'translate-x-1'}
+                      `}
+                    />
+                  </button>
+                </div>
+
+                {/* Input Device Selection for System Audio Capture */}
+                {localSettings.enableSystemAudioCapture && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                      Input Device for System Audio Capture
+                    </label>
+                    <select
+                      value={localSettings.inputDeviceId}
+                      onChange={(e) => handleSettingChange('inputDeviceId', e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">Select input device</option>
+                      {audioDevices
+                        .filter(device => device.type === 'input' || device.type === 'monitor')
+                        .map(device => (
+                          <option key={device.id} value={device.id}>
+                            {device.name} {device.isDefault ? '(Default)' : ''}
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Choose a monitor source to capture audio from applications. 
+                      Monitor sources allow you to record what's playing through your speakers.
+                    </p>
+                    
+                    {/* Input Device Info */}
+                    {localSettings.inputDeviceId && (
+                      <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                          System Audio Capture Setup:
+                        </h4>
+                        <ol className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+                          <li>1. Play audio in Spotify, YouTube, Discord, etc.</li>
+                          <li>2. Use the record button to capture system audio</li>
+                          <li>3. The captured audio will be saved as a clip</li>
+                          <li>4. You can then play it back through Discord</li>
+                        </ol>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Output Device Selection (when virtual routing is disabled) */}
                 {!localSettings.enableVirtualAudioRouting && (
                   <div>

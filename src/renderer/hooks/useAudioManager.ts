@@ -17,6 +17,11 @@ declare global {
       getAudioDevices: () => Promise<AudioDevice[]>;
       registerHotkey: (assignment: any) => Promise<boolean>;
       unregisterHotkey: (clipId: string) => Promise<boolean>;
+      installAutostart: () => Promise<boolean>;
+      uninstallAutostart: () => Promise<boolean>;
+      getAutostartStatus: () => Promise<{ isInstalled: boolean; isEnabled: boolean; isActive: boolean }>;
+      startSystemAudioCapture: () => Promise<void>;
+      stopSystemAudioCapture: () => Promise<any>;
       onRecordingStateChanged: (callback: (state: any) => void) => void;
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;
@@ -43,10 +48,12 @@ export const useAudioManager = () => {
     theme: 'system',
     outputDeviceId: '',
     virtualAudioDeviceId: '',
+    inputDeviceId: '',
     clipsDirectory: '',
     enableHotkeys: true,
     volume: 1.0,
     enableVirtualAudioRouting: false,
+    enableSystemAudioCapture: false,
     enableAutoStart: false
   });
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
@@ -133,21 +140,35 @@ export const useAudioManager = () => {
   // Audio recording functions
   const startRecording = useCallback(async () => {
     try {
-      await window.electronAPI.startRecording();
+      // Check if system audio capture is enabled
+      if (settings.enableSystemAudioCapture && settings.inputDeviceId) {
+        // Use system audio capture
+        await window.electronAPI.startSystemAudioCapture();
+      } else {
+        // Use regular microphone recording
+        await window.electronAPI.startRecording();
+      }
     } catch (error) {
       console.error('Failed to start recording:', error);
       throw error;
     }
-  }, []);
+  }, [settings.enableSystemAudioCapture, settings.inputDeviceId]);
 
   const stopRecording = useCallback(async () => {
     try {
-      await window.electronAPI.stopRecording();
+      // Check if system audio capture is enabled
+      if (settings.enableSystemAudioCapture && settings.inputDeviceId) {
+        // Use system audio capture stop
+        await window.electronAPI.stopSystemAudioCapture();
+      } else {
+        // Use regular microphone recording stop
+        await window.electronAPI.stopRecording();
+      }
     } catch (error) {
       console.error('Failed to stop recording:', error);
       throw error;
     }
-  }, []);
+  }, [settings.enableSystemAudioCapture, settings.inputDeviceId]);
 
   // Audio playback functions
   const playClip = useCallback(async (clipId: string) => {

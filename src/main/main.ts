@@ -190,6 +190,15 @@ class SoundboardApp {
     ipcMain.handle(IPC_CHANNELS.GET_AUTOSTART_STATUS, async () => {
       return await this.getAutoStartStatus();
     });
+
+    // System audio capture
+    ipcMain.handle(IPC_CHANNELS.START_SYSTEM_AUDIO_CAPTURE, () => {
+      this.startSystemAudioCapture();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.STOP_SYSTEM_AUDIO_CAPTURE, () => {
+      return this.stopSystemAudioCapture();
+    });
   }
 
   private startRecording(): void {
@@ -724,10 +733,12 @@ class SoundboardApp {
       theme: 'system',
       outputDeviceId: '',
       virtualAudioDeviceId: '',
+      inputDeviceId: '',
       clipsDirectory: this.clipsDirectory,
       enableHotkeys: true,
       volume: 1.0,
       enableVirtualAudioRouting: false,
+      enableSystemAudioCapture: false,
       enableAutoStart: false
     };
 
@@ -814,6 +825,182 @@ class SoundboardApp {
       console.error('Failed to get auto-start status:', error);
       return { isInstalled: false, isEnabled: false, isActive: false };
     }
+  }
+
+  private startSystemAudioCapture(): void {
+    if (this.isRecording) return;
+
+    const settings = this.getSettings();
+    console.log('System audio capture settings:', settings);
+    
+    if (!settings.enableSystemAudioCapture) {
+      console.log('System audio capture is disabled');
+      return;
+    }
+
+    const inputDeviceId = settings.inputDeviceId;
+    console.log('Input device ID:', inputDeviceId);
+    
+    if (!inputDeviceId || !inputDeviceId.startsWith('monitor-')) {
+      console.log('No monitor device selected for system audio capture');
+      return;
+    }
+
+    this.isRecording = true;
+    this.recordingStartTime = Date.now();
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    this.currentRecordingFile = path.join(this.clipsDirectory, `system_audio_${timestamp}.wav`);
+
+    try {
+      // Import execSync at the top
+      const { execSync } = require('child_process');
+      
+      // Check if ffmpeg is available
+      try {
+        execSync('ffmpeg -version', { stdio: 'pipe' });
+      } catch (error) {
+        console.error('FFmpeg is not installed. Please install ffmpeg to use system audio capture.');
+        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+          message: 'FFmpeg is not installed',
+          details: 'Please install ffmpeg to use system audio capture: sudo apt install ffmpeg'
+        });
+        this.isRecording = false;
+        return;
+      }
+
+      // Extract the device ID from the monitor device ID
+      const deviceId = inputDeviceId.replace('monitor-', '');
+      console.log('Starting system audio capture from device ID:', deviceId);
+      console.log('Original inputDeviceId:', inputDeviceId);
+      console.log('Extracted deviceId:', deviceId);
+
+      // Get the actual monitor source name from PulseAudio
+      const pulseOutput = execSync('pactl list short sources', { stdio: 'pipe' }).toString();
+      const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+      
+      let monitorSourceName = '';
+      console.log('Parsing PulseAudio sources, looking for device ID:', deviceId);
+      
+      // Find the monitor source by matching the device ID
+      for (const line of lines) {
+        const parts = line.split('\t');
+        if (parts.length >= 2) {
+          const sourceId = parts[0];
+          const sourceName = parts[1];
+          console.log(`Source ID: ${sourceId}, Name: ${sourceName}`);
+          
+          // Check if this source ID matches our device ID
+          if (sourceId === deviceId) {
+            monitorSourceName = sourceName;
+            console.log('Found monitor source:', monitorSourceName);
+            break;
+          }
+        }
+      }
+
+      if (!monitorSourceName) {
+        console.error('Could not find monitor source for device ID:', deviceId);
+        console.log('Available sources:', lines);
+        this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+          message: 'Monitor source not found',
+          details: `Could not find monitor source for device ID: ${deviceId}. Available sources: ${lines.map((l: string) => l.split('\t')[0] + ':' + l.split('\t')[1]).join(', ')}`
+        });
+        this.isRecording = false;
+        return;
+      }
+
+      console.log('Using monitor source:', monitorSourceName);
+      
+      // Use ffmpeg to capture from the monitor source
+      const ffmpegCommand = `ffmpeg -f pulse -i "${monitorSourceName}" -acodec pcm_s16le -ar 44100 -ac 1 -y "${this.currentRecordingFile}"`;
+      
+      console.log('Running ffmpeg command:', ffmpegCommand);
+      
+      const audioProcess = exec(ffmpegCommand, (error: Error, stdout: string, stderr: string) => {
+        if (error) {
+          console.error('FFmpeg system audio capture failed:', error);
+          console.error('FFmpeg stderr:', stderr);
+          this.isRecording = false;
+          
+          // Notify renderer of the error
+          this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+            message: 'System audio capture failed',
+            details: error.message || 'FFmpeg failed to capture audio'
+          });
+        } else {
+          console.log('FFmpeg system audio capture finished successfully');
+          this.isRecording = false;
+        }
+      });
+
+      // Store the recording process
+      this.recordingStream = audioProcess;
+      
+      // Set up a timer to stop recording after a reasonable duration (e.g., 30 seconds)
+      setTimeout(() => {
+        if (this.isRecording) {
+          console.log('Auto-stopping system audio capture after timeout');
+          this.stopSystemAudioCapture();
+        }
+      }, 30000); // 30 seconds timeout
+
+    } catch (error) {
+      console.error('Failed to start system audio capture:', error);
+      this.isRecording = false;
+      
+      // Notify renderer of the error
+      this.mainWindow?.webContents.send(IPC_CHANNELS.PLAYBACK_ERROR, {
+        message: 'System audio capture failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred'
+      });
+    }
+
+    // Notify renderer of recording state change
+    this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+      isRecording: true,
+      duration: 0,
+      startTime: this.recordingStartTime
+    });
+  }
+
+  private stopSystemAudioCapture(): AudioClip | null {
+    if (!this.isRecording) return null;
+
+    this.isRecording = false;
+    const duration = (Date.now() - this.recordingStartTime) / 1000;
+
+    if (this.recordingStream) {
+      this.recordingStream.kill(); // Use kill() to stop the process
+      this.recordingStream = null;
+    }
+
+    // Wait a bit for file to be written
+    setTimeout(() => {
+      if (fs.existsSync(this.currentRecordingFile)) {
+        const clip: AudioClip = {
+          id: this.generateClipId(),
+          name: `System_Audio_${this.generateClipNumber()}`,
+          filePath: this.currentRecordingFile,
+          duration: Math.round(duration * 100) / 100,
+          createdAt: new Date()
+        };
+
+        this.saveClip(clip);
+        
+        // Notify renderer of new clip
+        this.mainWindow?.webContents.send(IPC_CHANNELS.SAVE_CLIP, clip);
+      }
+    }, 100);
+
+    // Notify renderer of recording state change
+    this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+      isRecording: false,
+      duration: Math.round(duration * 100) / 100,
+      startTime: undefined
+    });
+
+    return null;
   }
 
   private updateSettings(settings: Partial<AppSettings>): AppSettings {
@@ -991,6 +1178,70 @@ class SoundboardApp {
           devices.push(virtualDevice);
         }
       });
+
+      // Try to get PulseAudio monitor sources for system audio capture
+      try {
+        const { execSync } = require('child_process');
+        const pulseOutput = execSync('pactl list short sources', { stdio: 'pipe' }).toString();
+        const lines = pulseOutput.split('\n').filter((line: string) => line.trim());
+        
+        lines.forEach((line: string, index: number) => {
+          const parts = line.split('\t');
+          if (parts.length >= 2) {
+            const deviceName = parts[1];
+            const deviceId = parts[0];
+            
+            // Check if this is a monitor source (for system audio capture)
+            if (deviceName.toLowerCase().includes('monitor')) {
+              // Extract the actual source name (remove .monitor suffix)
+              const sourceName = deviceName.replace('.monitor', '');
+              
+              // Get the description of the actual source
+              let sourceDescription = '';
+              try {
+                const sourceDetails = execSync(`pactl list sources | grep -A 10 "Name: ${sourceName}"`, { stdio: 'pipe' }).toString();
+                const descriptionMatch = sourceDetails.match(/Description: (.+)/);
+                if (descriptionMatch) {
+                  sourceDescription = descriptionMatch[1];
+                }
+              } catch (error) {
+                // If we can't get the description, use the source name
+                sourceDescription = sourceName;
+              }
+              
+              devices.push({
+                id: `monitor-${deviceId}`,
+                name: `🎵 ${sourceDescription || sourceName} (System Audio)`,
+                type: 'monitor',
+                isDefault: false,
+                isMonitor: true,
+                description: `Capture audio from ${sourceDescription || sourceName}`
+              });
+            } else if (!deviceName.includes('monitor') && !deviceName.includes('sink')) {
+              // This is an input source (microphone)
+              let displayName = deviceName;
+              if (deviceName.includes('bluetooth') || deviceName.includes('bluez')) {
+                displayName = `🎧 ${deviceName}`;
+              } else if (deviceName.includes('usb')) {
+                displayName = `🔌 ${deviceName}`;
+              } else if (deviceName.includes('built-in') || deviceName.includes('Mic')) {
+                displayName = `🎤 ${deviceName}`;
+              }
+              
+              devices.push({
+                id: deviceName,
+                name: displayName,
+                type: 'input',
+                isDefault: false,
+                isMonitor: false,
+                description: `Microphone input device`
+              });
+            }
+          }
+        });
+      } catch (error: any) {
+        console.log('Could not get PulseAudio monitor sources:', error.message);
+      }
 
       return devices.length > 0 ? devices : [
         { id: 'default', name: 'Default Output', type: 'output', isDefault: true }

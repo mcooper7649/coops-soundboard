@@ -15,9 +15,10 @@ export interface PlaybackError {
 export interface AudioDevice {
   id: string;
   name: string;
-  type: 'input' | 'output' | 'virtual';
+  type: 'input' | 'output' | 'virtual' | 'monitor';
   isDefault: boolean;
   isVirtual?: boolean;
+  isMonitor?: boolean;
   description?: string;
 }
 
@@ -25,10 +26,12 @@ export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   outputDeviceId: string;
   virtualAudioDeviceId: string; // New field for virtual audio routing
+  inputDeviceId: string; // New field for input device selection
   clipsDirectory: string;
   enableHotkeys: boolean;
   volume: number;
   enableVirtualAudioRouting: boolean; // New field to enable/disable virtual routing
+  enableSystemAudioCapture: boolean; // New field for system audio capture
   enableAutoStart: boolean; // New field for auto-start service
 }
 
@@ -82,7 +85,11 @@ export const IPC_CHANNELS = {
   // Auto-start service management
   INSTALL_AUTOSTART: 'install-autostart',
   UNINSTALL_AUTOSTART: 'uninstall-autostart',
-  GET_AUTOSTART_STATUS: 'get-autostart-status'
+  GET_AUTOSTART_STATUS: 'get-autostart-status',
+  
+  // System audio capture
+  START_SYSTEM_AUDIO_CAPTURE: 'start-system-audio-capture',
+  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture'
 } as const;
 
 // Event types for IPC
@@ -107,4 +114,6 @@ export type IpcEventMap = {
   [IPC_CHANNELS.INSTALL_AUTOSTART]: boolean;
   [IPC_CHANNELS.UNINSTALL_AUTOSTART]: boolean;
   [IPC_CHANNELS.GET_AUTOSTART_STATUS]: { isInstalled: boolean; isEnabled: boolean; isActive: boolean };
+  [IPC_CHANNELS.START_SYSTEM_AUDIO_CAPTURE]: void;
+  [IPC_CHANNELS.STOP_SYSTEM_AUDIO_CAPTURE]: void;
 };
