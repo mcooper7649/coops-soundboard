@@ -1,0 +1,105 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+// Define IPC channels inline to avoid import issues
+const IPC_CHANNELS = {
+  // Audio recording
+  START_RECORDING: 'start-recording',
+  STOP_RECORDING: 'stop-recording',
+  RECORDING_STATE_CHANGED: 'recording-state-changed',
+  
+  // Audio playback
+  PLAY_CLIP: 'play-clip',
+  STOP_PLAYBACK: 'stop-playback',
+  PLAYBACK_STATE_CHANGED: 'playback-state-changed',
+  
+  // Clip management
+  GET_CLIPS: 'get-clips',
+  SAVE_CLIP: 'save-clip',
+  DELETE_CLIP: 'delete-clip',
+  RENAME_CLIP: 'rename-clip',
+  
+  // Settings
+  GET_SETTINGS: 'get-settings',
+  UPDATE_SETTINGS: 'update-settings',
+  GET_AUDIO_DEVICES: 'get-audio-devices',
+  
+  // Hotkeys
+  REGISTER_HOTKEY: 'register-hotkey',
+  UNREGISTER_HOTKEY: 'unregister-hotkey',
+  HOTKEY_PRESSED: 'hotkey-pressed'
+} as const;
+
+// Expose protected methods that allow the renderer process to use
+// the ipcRenderer without exposing the entire object
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Audio recording
+  startRecording: () => ipcRenderer.invoke(IPC_CHANNELS.START_RECORDING),
+  stopRecording: () => ipcRenderer.invoke(IPC_CHANNELS.STOP_RECORDING),
+  
+  // Audio playback
+  playClip: (clipId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLAY_CLIP, clipId),
+  stopPlayback: () => ipcRenderer.invoke(IPC_CHANNELS.STOP_PLAYBACK),
+  
+  // Clip management
+  getClips: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CLIPS),
+  saveClip: (clip: any) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_CLIP, clip),
+  deleteClip: (clipId: string) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_CLIP, clipId),
+  renameClip: (id: string, name: string) => ipcRenderer.invoke(IPC_CHANNELS.RENAME_CLIP, { id, name }),
+  
+  // Settings
+  getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
+  updateSettings: (settings: any) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_SETTINGS, settings),
+  getAudioDevices: () => ipcRenderer.invoke(IPC_CHANNELS.GET_AUDIO_DEVICES),
+  
+  // Hotkeys
+  registerHotkey: (assignment: any) => ipcRenderer.invoke(IPC_CHANNELS.REGISTER_HOTKEY, assignment),
+  unregisterHotkey: (clipId: string) => ipcRenderer.invoke(IPC_CHANNELS.UNREGISTER_HOTKEY, clipId),
+  
+  // Event listeners
+  onRecordingStateChanged: (callback: (state: any) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.RECORDING_STATE_CHANGED, (_, state) => callback(state));
+  },
+  
+  onPlaybackStateChanged: (callback: (state: any) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.PLAYBACK_STATE_CHANGED, (_, state) => callback(state));
+  },
+  
+  onClipSaved: (callback: (clip: any) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.SAVE_CLIP, (_, clip) => callback(clip));
+  },
+  
+  onHotkeyPressed: (callback: (clipId: string) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.HOTKEY_PRESSED, (_, clipId) => callback(clipId));
+  },
+  
+  // Remove event listeners
+  removeAllListeners: (channel: string) => {
+    ipcRenderer.removeAllListeners(channel);
+  }
+});
+
+// Type definitions for the exposed API
+declare global {
+  interface Window {
+    electronAPI: {
+      startRecording: () => Promise<void>;
+      stopRecording: () => Promise<any>;
+      playClip: (clipId: string) => Promise<void>;
+      stopPlayback: () => Promise<void>;
+      getClips: () => Promise<any[]>;
+      saveClip: (clip: any) => Promise<any>;
+      deleteClip: (clipId: string) => Promise<boolean>;
+      renameClip: (id: string, name: string) => Promise<any>;
+      getSettings: () => Promise<any>;
+      updateSettings: (settings: any) => Promise<any>;
+      getAudioDevices: () => Promise<any[]>;
+      registerHotkey: (assignment: any) => Promise<boolean>;
+      unregisterHotkey: (clipId: string) => Promise<boolean>;
+      onRecordingStateChanged: (callback: (state: any) => void) => void;
+      onPlaybackStateChanged: (callback: (state: any) => void) => void;
+      onClipSaved: (callback: (clip: any) => void) => void;
+      onHotkeyPressed: (callback: (clipId: string) => void) => void;
+      removeAllListeners: (channel: string) => void;
+    };
+  }
+}
