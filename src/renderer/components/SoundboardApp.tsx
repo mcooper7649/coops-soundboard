@@ -187,7 +187,7 @@ const SoundboardApp: React.FC = () => {
                     <input
                       type="range"
                       min="100"
-                      max="1000"
+                      max="3000"
                       step="50"
                       value={settings.systemAudioBufferDelay}
                       onChange={(e) => updateSettings({ systemAudioBufferDelay: parseInt(e.target.value) })}
@@ -195,7 +195,7 @@ const SoundboardApp: React.FC = () => {
                     />
                     <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
                       <span>100ms</span>
-                      <span>1000ms</span>
+                      <span>3000ms</span>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                       Adjusts how long recording continues after releasing the button
