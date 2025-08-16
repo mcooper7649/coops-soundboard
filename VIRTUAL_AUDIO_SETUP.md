@@ -39,6 +39,20 @@ This script will:
 4. Select `soundboard-output` as your virtual audio device
 5. Save settings
 
+## Automatic Startup (Recommended)
+
+To automatically restore virtual audio devices on every boot:
+
+```bash
+# Install auto-start service
+./scripts/install-autostart.sh
+
+# To remove auto-start service
+./scripts/uninstall-autostart.sh
+```
+
+This creates a systemd user service that runs the setup script automatically when you log in.
+
 ## How It Works
 
 ```
@@ -75,6 +89,11 @@ You should hear a test sound, and if you're in Discord, others should hear it to
 - Run the setup script again: `./scripts/setup-virtual-audio.sh`
 - Check that PulseAudio/PipeWire is running
 - Look for any error messages in the setup script
+
+### Auto-Start Not Working
+- Check service status: `systemctl --user status soundboard-audio.service`
+- Reinstall the service: `./scripts/install-autostart.sh`
+- Check systemd user logs: `journalctl --user -u soundboard-audio.service`
 
 ## Cleanup
 
@@ -113,3 +132,4 @@ If you encounter issues:
 2. Verify PulseAudio/PipeWire is running
 3. Try running the cleanup script and setup script again
 4. Check that your audio system supports virtual devices
+5. For auto-start issues, check the systemd service status

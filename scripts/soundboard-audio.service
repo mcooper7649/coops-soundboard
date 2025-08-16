@@ -1,0 +1,12 @@
+[Unit]
+Description=SoundBoard Virtual Audio Setup
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/Documents/Github/SoundBoard/scripts/setup-virtual-audio.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

@@ -252,6 +252,100 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </div>
                 )}
 
+                {/* Auto-Start Service Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Auto-Start Virtual Audio
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Automatically restore virtual audio devices on system boot
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSettingChange('enableAutoStart', !localSettings.enableAutoStart)}
+                    className={`
+                      relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                      ${localSettings.enableAutoStart
+                        ? 'bg-primary-600'
+                        : 'bg-gray-200 dark:bg-gray-700'
+                      }
+                    `}
+                  >
+                    <span
+                      className={`
+                        inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                        ${localSettings.enableAutoStart ? 'translate-x-6' : 'translate-x-1'}
+                      `}
+                    />
+                  </button>
+                </div>
+
+                {/* Auto-Start Status and Controls */}
+                {localSettings.enableAutoStart && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                    <h4 className="font-medium text-green-900 dark:text-green-100 mb-2">
+                      Auto-Start Service Status:
+                    </h4>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-green-800 dark:text-green-200">Service Status:</span>
+                        <span className="text-sm font-medium text-green-900 dark:text-green-100">
+                          {localSettings.enableAutoStart ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button 
+                          onClick={async () => {
+                            try {
+                              const success = await (window as any).electronAPI.installAutostart();
+                              if (success) {
+                                // Update local state
+                                setLocalSettings(prev => ({ ...prev, enableAutoStart: true }));
+                              }
+                            } catch (error) {
+                              console.error('Failed to install auto-start:', error);
+                            }
+                          }}
+                          className="btn-primary text-xs px-3 py-1"
+                        >
+                          Install Service
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            try {
+                              const success = await (window as any).electronAPI.uninstallAutostart();
+                              if (success) {
+                                // Update local state
+                                setLocalSettings(prev => ({ ...prev, enableAutoStart: false }));
+                              }
+                            } catch (error) {
+                                console.error('Failed to uninstall auto-start:', error);
+                            }
+                          }}
+                          className="btn-secondary text-xs px-3 py-1"
+                        >
+                          Remove Service
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            try {
+                              const status = await (window as any).electronAPI.getAutostartStatus();
+                              console.log('Auto-start status:', status);
+                              // You could show this in a toast or update the UI
+                            } catch (error) {
+                              console.error('Failed to get auto-start status:', error);
+                            }
+                          }}
+                          className="btn-secondary text-xs px-3 py-1"
+                        >
+                          Check Status
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Output Device Selection (when virtual routing is disabled) */}
                 {!localSettings.enableVirtualAudioRouting && (
                   <div>

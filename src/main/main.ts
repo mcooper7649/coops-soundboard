@@ -140,8 +140,20 @@ class SoundboardApp {
     });
 
     // Settings
-    ipcMain.handle(IPC_CHANNELS.GET_SETTINGS, () => {
-      return this.getSettings();
+    ipcMain.handle(IPC_CHANNELS.GET_SETTINGS, async () => {
+      const settings = this.getSettings();
+      
+      // Check actual auto-start service status if not explicitly set
+      if (this.store.get('settings.enableAutoStart') === undefined) {
+        try {
+          const status = await this.getAutoStartStatus();
+          settings.enableAutoStart = status.isInstalled && status.isEnabled;
+        } catch (error) {
+          console.log('Could not check auto-start status, using default:', error);
+        }
+      }
+      
+      return settings;
     });
 
     ipcMain.handle(IPC_CHANNELS.UPDATE_SETTINGS, (_, settings: Partial<AppSettings>) => {
@@ -164,6 +176,19 @@ class SoundboardApp {
     // Handle playback errors
     ipcMain.on('playback-error', (_, errorData) => {
       this.mainWindow?.webContents.send('playback-error', errorData);
+    });
+
+    // Auto-start service management
+    ipcMain.handle(IPC_CHANNELS.INSTALL_AUTOSTART, async () => {
+      return await this.installAutoStart();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.UNINSTALL_AUTOSTART, async () => {
+      return await this.uninstallAutoStart();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.GET_AUTOSTART_STATUS, async () => {
+      return await this.getAutoStartStatus();
     });
   }
 
@@ -702,10 +727,93 @@ class SoundboardApp {
       clipsDirectory: this.clipsDirectory,
       enableHotkeys: true,
       volume: 1.0,
-      enableVirtualAudioRouting: false
+      enableVirtualAudioRouting: false,
+      enableAutoStart: false
     };
 
-    return { ...defaultSettings, ...this.store.get('settings', {}) };
+    const storedSettings = this.store.get('settings', {});
+    const settings = { ...defaultSettings, ...storedSettings };
+
+    return settings;
+  }
+
+  private async installAutoStart(): Promise<boolean> {
+    try {
+      const { execSync } = require('child_process');
+      const scriptPath = path.join(process.cwd(), 'scripts', 'install-autostart.sh');
+      
+      // Check if script exists
+      if (!fs.existsSync(scriptPath)) {
+        console.error('Auto-start script not found:', scriptPath);
+        return false;
+      }
+
+      // Make script executable and run it
+      execSync(`chmod +x "${scriptPath}"`, { stdio: 'pipe' });
+      execSync(`"${scriptPath}"`, { stdio: 'pipe' });
+      
+      // Update settings to reflect auto-start is enabled
+      const currentSettings = this.getSettings();
+      currentSettings.enableAutoStart = true;
+      this.store.set('settings', currentSettings);
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to install auto-start service:', error);
+      return false;
+    }
+  }
+
+  private async uninstallAutoStart(): Promise<boolean> {
+    try {
+      const { execSync } = require('child_process');
+      const scriptPath = path.join(process.cwd(), 'scripts', 'uninstall-autostart.sh');
+      
+      // Check if script exists
+      if (!fs.existsSync(scriptPath)) {
+        console.error('Auto-start uninstall script not found:', scriptPath);
+        return false;
+      }
+
+      // Make script executable and run it
+      execSync(`chmod +x "${scriptPath}"`, { stdio: 'pipe' });
+      execSync(`"${scriptPath}"`, { stdio: 'pipe' });
+      
+      // Update settings to reflect auto-start is disabled
+      const currentSettings = this.getSettings();
+      currentSettings.enableAutoStart = false;
+      this.store.set('settings', currentSettings);
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to uninstall auto-start service:', error);
+      return false;
+    }
+  }
+
+  private async getAutoStartStatus(): Promise<{ isInstalled: boolean; isEnabled: boolean; isActive: boolean }> {
+    try {
+      const { execSync } = require('child_process');
+      
+      // Check if service file exists
+      const servicePath = path.join(os.homedir(), '.config', 'systemd', 'user', 'soundboard-audio.service');
+      const isInstalled = fs.existsSync(servicePath);
+      
+      if (!isInstalled) {
+        return { isInstalled: false, isEnabled: false, isActive: false };
+      }
+
+      // Check if service is enabled
+      const isEnabled = execSync('systemctl --user is-enabled soundboard-audio.service', { stdio: 'pipe' }).toString().trim() === 'enabled';
+      
+      // Check if service is active
+      const isActive = execSync('systemctl --user is-active soundboard-audio.service', { stdio: 'pipe' }).toString().trim() === 'active';
+      
+      return { isInstalled, isEnabled, isActive };
+    } catch (error) {
+      console.error('Failed to get auto-start status:', error);
+      return { isInstalled: false, isEnabled: false, isActive: false };
+    }
   }
 
   private updateSettings(settings: Partial<AppSettings>): AppSettings {

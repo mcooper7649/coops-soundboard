@@ -27,7 +27,12 @@ const IPC_CHANNELS = {
   // Hotkeys
   REGISTER_HOTKEY: 'register-hotkey',
   UNREGISTER_HOTKEY: 'unregister-hotkey',
-  HOTKEY_PRESSED: 'hotkey-pressed'
+  HOTKEY_PRESSED: 'hotkey-pressed',
+  
+  // Auto-start service management
+  INSTALL_AUTOSTART: 'install-autostart',
+  UNINSTALL_AUTOSTART: 'uninstall-autostart',
+  GET_AUTOSTART_STATUS: 'get-autostart-status'
 } as const;
 
 // Expose protected methods that allow the renderer process to use
@@ -55,6 +60,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Hotkeys
   registerHotkey: (assignment: any) => ipcRenderer.invoke(IPC_CHANNELS.REGISTER_HOTKEY, assignment),
   unregisterHotkey: (clipId: string) => ipcRenderer.invoke(IPC_CHANNELS.UNREGISTER_HOTKEY, clipId),
+  
+  // Auto-start service management
+  installAutostart: () => ipcRenderer.invoke(IPC_CHANNELS.INSTALL_AUTOSTART),
+  uninstallAutostart: () => ipcRenderer.invoke(IPC_CHANNELS.UNINSTALL_AUTOSTART),
+  getAutostartStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_AUTOSTART_STATUS),
   
   // Event listeners
   onRecordingStateChanged: (callback: (state: any) => void) => {
@@ -100,6 +110,9 @@ declare global {
       getAudioDevices: () => Promise<any[]>;
       registerHotkey: (assignment: any) => Promise<boolean>;
       unregisterHotkey: (clipId: string) => Promise<boolean>;
+      installAutostart: () => Promise<boolean>;
+      uninstallAutostart: () => Promise<boolean>;
+      getAutostartStatus: () => Promise<{ isInstalled: boolean; isEnabled: boolean; isActive: boolean }>;
       onRecordingStateChanged: (callback: (state: any) => void) => void;
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;

@@ -46,7 +46,8 @@ export const useAudioManager = () => {
     clipsDirectory: '',
     enableHotkeys: true,
     volume: 1.0,
-    enableVirtualAudioRouting: false
+    enableVirtualAudioRouting: false,
+    enableAutoStart: false
   });
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);

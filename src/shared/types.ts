@@ -29,6 +29,7 @@ export interface AppSettings {
   enableHotkeys: boolean;
   volume: number;
   enableVirtualAudioRouting: boolean; // New field to enable/disable virtual routing
+  enableAutoStart: boolean; // New field for auto-start service
 }
 
 export interface RecordingState {
@@ -76,7 +77,12 @@ export const IPC_CHANNELS = {
   // Hotkeys
   REGISTER_HOTKEY: 'register-hotkey',
   UNREGISTER_HOTKEY: 'unregister-hotkey',
-  HOTKEY_PRESSED: 'hotkey-pressed'
+  HOTKEY_PRESSED: 'hotkey-pressed',
+  
+  // Auto-start service management
+  INSTALL_AUTOSTART: 'install-autostart',
+  UNINSTALL_AUTOSTART: 'uninstall-autostart',
+  GET_AUTOSTART_STATUS: 'get-autostart-status'
 } as const;
 
 // Event types for IPC
@@ -98,4 +104,7 @@ export type IpcEventMap = {
   [IPC_CHANNELS.REGISTER_HOTKEY]: HotkeyAssignment;
   [IPC_CHANNELS.UNREGISTER_HOTKEY]: string;
   [IPC_CHANNELS.HOTKEY_PRESSED]: string;
+  [IPC_CHANNELS.INSTALL_AUTOSTART]: boolean;
+  [IPC_CHANNELS.UNINSTALL_AUTOSTART]: boolean;
+  [IPC_CHANNELS.GET_AUTOSTART_STATUS]: { isInstalled: boolean; isEnabled: boolean; isActive: boolean };
 };
