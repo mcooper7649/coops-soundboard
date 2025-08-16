@@ -830,7 +830,10 @@ class SoundboardApp {
   }
 
   private startSystemAudioCapture(): void {
-    if (this.isRecording) return;
+    if (this.isRecording) {
+      console.log('System audio capture already in progress');
+      return;
+    }
 
     const settings = this.getSettings();
     console.log('System audio capture settings:', settings);
@@ -838,6 +841,12 @@ class SoundboardApp {
     if (!settings.enableSystemAudioCapture) {
       console.log('System audio capture is disabled');
       return;
+    }
+
+    // Check if virtual audio routing is enabled and warn about potential conflicts
+    if (settings.enableVirtualAudioRouting) {
+      console.log('⚠️  Virtual audio routing is enabled - this may affect system audio capture');
+      console.log('Consider disabling virtual audio routing if you experience issues');
     }
 
     const inputDeviceId = settings.inputDeviceId;
@@ -848,8 +857,16 @@ class SoundboardApp {
       return;
     }
 
+    // Set recording state BEFORE starting the capture
     this.isRecording = true;
     this.recordingStartTime = Date.now();
+    
+    // Notify renderer of recording state change IMMEDIATELY
+    this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+      isRecording: true,
+      duration: 0,
+      startTime: this.recordingStartTime
+    });
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.currentRecordingFile = path.join(this.clipsDirectory, `system_audio_${timestamp}.wav`);
@@ -868,6 +885,12 @@ class SoundboardApp {
           details: 'Please install ffmpeg to use system audio capture: sudo apt install ffmpeg'
         });
         this.isRecording = false;
+        // Notify renderer of recording state change on error
+        this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+          isRecording: false,
+          duration: 0,
+          startTime: undefined
+        });
         return;
       }
 
@@ -909,6 +932,12 @@ class SoundboardApp {
           details: `Could not find monitor source for device ID: ${deviceId}. Available sources: ${lines.map((l: string) => l.split('\t')[0] + ':' + l.split('\t')[1]).join(', ')}`
         });
         this.isRecording = false;
+        // Notify renderer of recording state change on error
+        this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+          isRecording: false,
+          duration: 0,
+          startTime: undefined
+        });
         return;
       }
 
@@ -930,9 +959,24 @@ class SoundboardApp {
             message: 'System audio capture failed',
             details: error.message || 'FFmpeg failed to capture audio'
           });
+          
+          // Notify renderer of recording state change on error
+          this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+            isRecording: false,
+            duration: 0,
+            startTime: undefined
+          });
         } else {
           console.log('FFmpeg system audio capture finished successfully');
           this.isRecording = false;
+          
+          // Notify renderer of recording state change on completion
+          const duration = (Date.now() - this.recordingStartTime) / 1000;
+          this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+            isRecording: false,
+            duration: Math.round(duration * 100) / 100,
+            startTime: undefined
+          });
         }
       });
 
@@ -956,23 +1000,28 @@ class SoundboardApp {
         message: 'System audio capture failed',
         details: error instanceof Error ? error.message : 'Unknown error occurred'
       });
+      
+      // Notify renderer of recording state change on error
+      this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
+        isRecording: false,
+        duration: 0,
+        startTime: undefined
+      });
     }
-
-    // Notify renderer of recording state change
-    this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
-      isRecording: true,
-      duration: 0,
-      startTime: this.recordingStartTime
-    });
   }
 
   private stopSystemAudioCapture(): AudioClip | null {
-    if (!this.isRecording) return null;
+    if (!this.isRecording) {
+      console.log('System audio capture not in progress');
+      return null;
+    }
 
+    console.log('Stopping system audio capture...');
     this.isRecording = false;
     const duration = (Date.now() - this.recordingStartTime) / 1000;
 
     if (this.recordingStream) {
+      console.log('Killing FFmpeg process...');
       this.recordingStream.kill(); // Use kill() to stop the process
       this.recordingStream = null;
     }
@@ -992,16 +1041,20 @@ class SoundboardApp {
         
         // Notify renderer of new clip
         this.mainWindow?.webContents.send(IPC_CHANNELS.SAVE_CLIP, clip);
+        console.log('System audio clip saved:', clip.name);
+      } else {
+        console.error('System audio recording file not found:', this.currentRecordingFile);
       }
     }, 100);
 
-    // Notify renderer of recording state change
+    // Notify renderer of recording state change IMMEDIATELY
     this.mainWindow?.webContents.send(IPC_CHANNELS.RECORDING_STATE_CHANGED, {
       isRecording: false,
       duration: Math.round(duration * 100) / 100,
       startTime: undefined
     });
 
+    console.log('System audio capture stopped successfully');
     return null;
   }
 
