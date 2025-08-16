@@ -36,7 +36,13 @@ const IPC_CHANNELS = {
   
   // System audio capture
   START_SYSTEM_AUDIO_CAPTURE: 'start-system-audio-capture',
-  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture'
+  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture',
+  
+  // Audio loopback management
+  ENABLE_SPEAKER_LOOPBACK: 'enable-speaker-loopback',
+  DISABLE_SPEAKER_LOOPBACK: 'disable-speaker-loopback',
+  ENABLE_HEADPHONE_LOOPBACK: 'enable-headphone-loopback',
+  DISABLE_HEADPHONE_LOOPBACK: 'disable-headphone-loopback'
 } as const;
 
 // Expose protected methods that allow the renderer process to use
@@ -73,6 +79,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // System audio capture
   startSystemAudioCapture: () => ipcRenderer.invoke(IPC_CHANNELS.START_SYSTEM_AUDIO_CAPTURE),
   stopSystemAudioCapture: () => ipcRenderer.invoke(IPC_CHANNELS.STOP_SYSTEM_AUDIO_CAPTURE),
+  
+  // Audio loopback management
+  enableSpeakerLoopback: () => ipcRenderer.invoke(IPC_CHANNELS.ENABLE_SPEAKER_LOOPBACK),
+  disableSpeakerLoopback: () => ipcRenderer.invoke(IPC_CHANNELS.DISABLE_SPEAKER_LOOPBACK),
+  enableHeadphoneLoopback: () => ipcRenderer.invoke(IPC_CHANNELS.ENABLE_HEADPHONE_LOOPBACK),
+  disableHeadphoneLoopback: () => ipcRenderer.invoke(IPC_CHANNELS.DISABLE_HEADPHONE_LOOPBACK),
   
   // Event listeners
   onRecordingStateChanged: (callback: (state: any) => void) => {

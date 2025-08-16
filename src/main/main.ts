@@ -739,7 +739,9 @@ class SoundboardApp {
       volume: 1.0,
       enableVirtualAudioRouting: false,
       enableSystemAudioCapture: false,
-      enableAutoStart: false
+      enableAutoStart: false,
+      enableSpeakerLoopback: false,
+      enableHeadphoneLoopback: false
     };
 
     const storedSettings = this.store.get('settings', {});

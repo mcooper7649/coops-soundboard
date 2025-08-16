@@ -22,6 +22,10 @@ declare global {
       getAutostartStatus: () => Promise<{ isInstalled: boolean; isEnabled: boolean; isActive: boolean }>;
       startSystemAudioCapture: () => Promise<void>;
       stopSystemAudioCapture: () => Promise<any>;
+      enableSpeakerLoopback: () => Promise<boolean>;
+      disableSpeakerLoopback: () => Promise<boolean>;
+      enableHeadphoneLoopback: () => Promise<boolean>;
+      disableHeadphoneLoopback: () => Promise<boolean>;
       onRecordingStateChanged: (callback: (state: any) => void) => void;
       onPlaybackStateChanged: (callback: (state: any) => void) => void;
       onClipSaved: (callback: (clip: any) => void) => void;
@@ -50,11 +54,13 @@ export const useAudioManager = () => {
     virtualAudioDeviceId: '',
     inputDeviceId: '',
     clipsDirectory: '',
-    enableHotkeys: true,
+    enableHotkeys: false, // DISABLE HOTKEYS BY DEFAULT TO FIX AUTO-PLAY BUG
     volume: 1.0,
     enableVirtualAudioRouting: false,
     enableSystemAudioCapture: false,
-    enableAutoStart: false
+    enableAutoStart: false,
+    enableSpeakerLoopback: true,
+    enableHeadphoneLoopback: true
   });
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,13 +89,20 @@ export const useAudioManager = () => {
     loadInitialData();
   }, []);
 
-  // Set up IPC event listeners
+  // Set up IPC event listeners - ONLY ONCE
   useEffect(() => {
+    console.log('=== SETTING UP EVENT LISTENERS ===');
+    console.log('Time:', new Date().toISOString());
+    console.log('Stack trace:', new Error().stack);
+    
     const handleRecordingStateChanged = (state: RecordingState) => {
       setRecordingState(state);
     };
 
     const handlePlaybackStateChanged = (state: PlaybackState) => {
+      console.log('=== PLAYBACK STATE CHANGED ===');
+      console.log('New state:', state);
+      console.log('Time:', new Date().toISOString());
       setPlaybackState(state);
     };
 
@@ -108,7 +121,19 @@ export const useAudioManager = () => {
 
     const handleHotkeyPressed = (clipId: string) => {
       // Handle hotkey press - could show a visual indicator
-      console.log('Hotkey pressed for clip:', clipId);
+      console.log('=== HOTKEY PRESSED ===');
+      console.log('Clip ID:', clipId);
+      console.log('Hotkeys enabled:', settings.enableHotkeys);
+      console.log('Stack trace:', new Error().stack);
+      console.log('Time:', new Date().toISOString());
+      
+      // Only process hotkeys if they're enabled
+      if (settings.enableHotkeys) {
+        console.log('Processing hotkey for clip:', clipId);
+        // Could add visual indicator here
+      } else {
+        console.log('Hotkeys disabled, ignoring hotkey press');
+      }
     };
 
     const handlePlaybackError = (errorData: any) => {
@@ -129,13 +154,14 @@ export const useAudioManager = () => {
 
     // Cleanup
     return () => {
+      console.log('=== CLEANING UP EVENT LISTENERS ===');
       window.electronAPI.removeAllListeners('recording-state-changed');
       window.electronAPI.removeAllListeners('playback-state-changed');
       window.electronAPI.removeAllListeners('clip-saved');
       window.electronAPI.removeAllListeners('hotkey-pressed');
       window.electronAPI.removeAllListeners('playback-error');
     };
-  }, []);
+  }, []); // Empty dependency array - runs only once
 
   // Audio recording functions
   const startRecording = useCallback(async () => {
@@ -172,13 +198,18 @@ export const useAudioManager = () => {
 
   // Audio playback functions
   const playClip = useCallback(async (clipId: string) => {
+    console.log('=== RENDERER PLAY_CLIP CALLED ===');
+    console.log('Clip ID:', clipId);
+    console.log('Caller stack trace:', new Error().stack);
+    console.log('Current clips state:', clips.length, 'clips loaded');
+    
     try {
       await window.electronAPI.playClip(clipId);
     } catch (error) {
       console.error('Failed to play clip:', error);
       throw error;
     }
-  }, []);
+  }, [clips.length]);
 
   const stopPlayback = useCallback(async () => {
     try {
@@ -281,6 +312,59 @@ export const useAudioManager = () => {
     }
   }, []);
 
+  // Loopback management functions
+  const enableSpeakerLoopback = useCallback(async () => {
+    try {
+      const success = await window.electronAPI.enableSpeakerLoopback();
+      if (success) {
+        setSettings(prev => ({ ...prev, enableSpeakerLoopback: true }));
+      }
+      return success;
+    } catch (error) {
+      console.error('Failed to enable speaker loopback:', error);
+      throw error;
+    }
+  }, []);
+
+  const disableSpeakerLoopback = useCallback(async () => {
+    try {
+      const success = await window.electronAPI.disableSpeakerLoopback();
+      if (success) {
+        setSettings(prev => ({ ...prev, enableSpeakerLoopback: false }));
+      }
+      return success;
+    } catch (error) {
+      console.error('Failed to disable speaker loopback:', error);
+      throw error;
+    }
+  }, []);
+
+  const enableHeadphoneLoopback = useCallback(async () => {
+    try {
+      const success = await window.electronAPI.enableHeadphoneLoopback();
+      if (success) {
+        setSettings(prev => ({ ...prev, enableHeadphoneLoopback: true }));
+      }
+      return success;
+    } catch (error) {
+      console.error('Failed to enable headphone loopback:', error);
+      throw error;
+    }
+  }, []);
+
+  const disableHeadphoneLoopback = useCallback(async () => {
+    try {
+      const success = await window.electronAPI.disableHeadphoneLoopback();
+      if (success) {
+        setSettings(prev => ({ ...prev, enableHeadphoneLoopback: false }));
+      }
+      return success;
+    } catch (error) {
+      console.error('Failed to disable headphone loopback:', error);
+      throw error;
+    }
+  }, []);
+
   return {
     clips,
     recordingState,
@@ -298,6 +382,10 @@ export const useAudioManager = () => {
     renameClip,
     updateSettings,
     registerHotkey,
-    unregisterHotkey
+    unregisterHotkey,
+    enableSpeakerLoopback,
+    disableSpeakerLoopback,
+    enableHeadphoneLoopback,
+    disableHeadphoneLoopback
   };
 };

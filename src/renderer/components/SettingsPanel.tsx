@@ -19,9 +19,41 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
   const [activeTab, setActiveTab] = useState<'general' | 'audio' | 'hotkeys'>('general');
 
-  const handleSettingChange = (key: keyof AppSettings, value: any) => {
+  const handleSettingChange = async (key: keyof AppSettings, value: any) => {
     const newSettings = { ...localSettings, [key]: value };
     setLocalSettings(newSettings);
+    
+    // Handle loopback settings immediately
+    if (key === 'enableSpeakerLoopback') {
+      try {
+        if (value) {
+          await (window as any).electronAPI.enableSpeakerLoopback();
+        } else {
+          await (window as any).electronAPI.disableSpeakerLoopback();
+        }
+      } catch (error) {
+        console.error('Failed to toggle speaker loopback:', error);
+        // Revert the setting if it failed
+        setLocalSettings(prev => ({ ...prev, [key]: !value }));
+        return;
+      }
+    }
+    
+    if (key === 'enableHeadphoneLoopback') {
+      try {
+        if (value) {
+          await (window as any).electronAPI.enableHeadphoneLoopback();
+        } else {
+          await (window as any).electronAPI.disableHeadphoneLoopback();
+        }
+      } catch (error) {
+        console.error('Failed to toggle headphone loopback:', error);
+        // Revert the setting if it failed
+        setLocalSettings(prev => ({ ...prev, [key]: !value }));
+        return;
+      }
+    }
+    
     onUpdateSettings(newSettings);
   };
 
@@ -417,6 +449,87 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     )}
                   </div>
                 )}
+
+                {/* Audio Loopback Controls */}
+                <div className="space-y-4">
+                  <h4 className="text-lg font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 pb-2">
+                    Audio Loopback Controls
+                  </h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Control which devices can hear the audio from your soundboard clips
+                  </p>
+                  
+                  {/* Speaker Loopback Toggle */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Enable Speaker Loopback
+                      </label>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Allow your speakers to hear soundboard clips (in addition to Discord)
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleSettingChange('enableSpeakerLoopback', !localSettings.enableSpeakerLoopback)}
+                      className={`
+                        relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                        ${localSettings.enableSpeakerLoopback
+                          ? 'bg-primary-600'
+                          : 'bg-gray-200 dark:bg-gray-700'
+                        }
+                      `}
+                    >
+                      <span
+                        className={`
+                          inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                          ${localSettings.enableSpeakerLoopback ? 'translate-x-6' : 'translate-x-1'}
+                        `}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Headphone Loopback Toggle */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Enable Headphone Loopback
+                      </label>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Allow your headphones to hear soundboard clips (in addition to Discord)
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleSettingChange('enableHeadphoneLoopback', !localSettings.enableHeadphoneLoopback)}
+                      className={`
+                        relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                        ${localSettings.enableHeadphoneLoopback
+                          ? 'bg-primary-600'
+                          : 'bg-gray-200 dark:bg-gray-700'
+                        }
+                      `}
+                    >
+                      <span
+                        className={`
+                          inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                          ${localSettings.enableHeadphoneLoopback ? 'translate-x-6' : 'translate-x-1'}
+                        `}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Loopback Info */}
+                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <h5 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                      How Loopback Works:
+                    </h5>
+                    <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+                      <li>• <strong>Speaker Loopback:</strong> Routes audio from virtual output to your speakers</li>
+                      <li>• <strong>Headphone Loopback:</strong> Routes audio from virtual output to your headphones</li>
+                      <li>• <strong>Discord Integration:</strong> Audio always goes to Discord via virtual microphone</li>
+                      <li>• <strong>Toggle Control:</strong> Enable/disable each loopback independently</li>
+                    </ul>
+                  </div>
+                </div>
 
                 {/* Output Device Selection (when virtual routing is disabled) */}
                 {!localSettings.enableVirtualAudioRouting && (

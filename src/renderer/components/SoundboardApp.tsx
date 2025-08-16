@@ -54,6 +54,11 @@ const SoundboardApp: React.FC = () => {
   };
 
   const handleClipPlay = async (clipId: string) => {
+    console.log('=== CLIP BUTTON CLICKED ===');
+    console.log('Clip ID:', clipId);
+    console.log('Button click stack trace:', new Error().stack);
+    console.log('Current time:', new Date().toISOString());
+    
     try {
       await playClip(clipId);
       toast.success('Playing clip');

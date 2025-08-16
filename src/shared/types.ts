@@ -33,6 +33,8 @@ export interface AppSettings {
   enableVirtualAudioRouting: boolean; // New field to enable/disable virtual routing
   enableSystemAudioCapture: boolean; // New field for system audio capture
   enableAutoStart: boolean; // New field for auto-start service
+  enableSpeakerLoopback: boolean; // New field for speaker audio loopback
+  enableHeadphoneLoopback: boolean; // New field for headphone audio loopback
 }
 
 export interface RecordingState {
@@ -89,7 +91,13 @@ export const IPC_CHANNELS = {
   
   // System audio capture
   START_SYSTEM_AUDIO_CAPTURE: 'start-system-audio-capture',
-  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture'
+  STOP_SYSTEM_AUDIO_CAPTURE: 'stop-system-audio-capture',
+  
+  // Audio loopback management
+  ENABLE_SPEAKER_LOOPBACK: 'enable-speaker-loopback',
+  DISABLE_SPEAKER_LOOPBACK: 'disable-speaker-loopback',
+  ENABLE_HEADPHONE_LOOPBACK: 'enable-headphone-loopback',
+  DISABLE_HEADPHONE_LOOPBACK: 'disable-headphone-loopback'
 } as const;
 
 // Event types for IPC
