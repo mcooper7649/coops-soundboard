@@ -60,7 +60,8 @@ export const useAudioManager = () => {
     enableSystemAudioCapture: false,
     enableAutoStart: false,
     enableSpeakerLoopback: true,
-    enableHeadphoneLoopback: true
+    enableHeadphoneLoopback: true,
+    systemAudioBufferDelay: 300 // Default 300ms buffer delay for system audio recording
   });
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);

@@ -178,6 +178,31 @@ const SoundboardApp: React.FC = () => {
                   onStop={handleRecordingStop}
                 />
                 
+                {/* System Audio Buffer Delay Setting */}
+                {settings.enableSystemAudioCapture && (
+                  <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      System Audio Buffer Delay: {settings.systemAudioBufferDelay}ms
+                    </label>
+                    <input
+                      type="range"
+                      min="100"
+                      max="1000"
+                      step="50"
+                      value={settings.systemAudioBufferDelay}
+                      onChange={(e) => updateSettings({ systemAudioBufferDelay: parseInt(e.target.value) })}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <span>100ms</span>
+                      <span>1000ms</span>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Adjusts how long recording continues after releasing the button
+                    </p>
+                  </div>
+                )}
+                
                 {recordingState.isRecording && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}

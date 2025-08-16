@@ -35,6 +35,7 @@ export interface AppSettings {
   enableAutoStart: boolean; // New field for auto-start service
   enableSpeakerLoopback: boolean; // New field for speaker audio loopback
   enableHeadphoneLoopback: boolean; // New field for headphone audio loopback
+  systemAudioBufferDelay: number; // Buffer delay for system audio recording (ms)
 }
 
 export interface RecordingState {

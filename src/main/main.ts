@@ -972,7 +972,8 @@ class SoundboardApp {
       enableSystemAudioCapture: false,
       enableAutoStart: false,
       enableSpeakerLoopback: false,
-      enableHeadphoneLoopback: false
+      enableHeadphoneLoopback: false,
+      systemAudioBufferDelay: 300 // Default 300ms buffer delay for system audio recording
     };
 
     const storedSettings = this.store.get('settings', {});
@@ -1285,9 +1286,10 @@ class SoundboardApp {
 
     console.log('Stopping system audio capture...');
     
-    // Add a small buffer delay to ensure clean recording completion
+    // Add a configurable buffer delay to ensure clean recording completion
     // This prevents the timing mismatch between button release and actual audio stop
-    const bufferDelay = 300; // 300ms buffer for clean recording completion
+    const settings = this.getSettings();
+    const bufferDelay = settings.systemAudioBufferDelay || 300; // Use setting or default to 300ms
     
     // Don't stop immediately - add buffer delay
     setTimeout(() => {
